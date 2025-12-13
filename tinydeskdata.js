@@ -647,17 +647,17 @@
 			if(node.type == 'move') {
 			if(Array.isArray(node.info)) {
 				for(item of node.info) {
-				this.tinyDeskData.pipe.move(item)
+				tinyDeskData.pipe.move(item)
 				}
-			} else {this.tinyDeskData.pipe.move(node.info)}
+			} else {tinyDeskData.pipe.move(node.info)}
 			}
 
 			if(node.type == 'transform') {
 			if(Array.isArray(node.info)) {
 				for(item of node.info) {
-				this.tinyDeskData.pipe.transform(item)
+				tinyDeskData.pipe.transform(item)
 				}
-			} else {this.tinyDeskData.pipe.transform(node.info)}
+			} else {tinyDeskData.pipe.transform(node.info)}
 			}
 
 			let end = new Date();
