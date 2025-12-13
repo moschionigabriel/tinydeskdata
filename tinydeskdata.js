@@ -707,5 +707,8 @@
 			
 		})()
 	};
-  return tinyDeskData;
-})();
+  
+    this.tinyDeskData = tinyDeskData;
+	
+	return tinyDeskData;
+}).call(this);
