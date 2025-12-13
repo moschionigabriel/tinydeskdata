@@ -1,4 +1,4 @@
- var tinyDeskData = {
+var tinyDeskData = {
 	pipe : (
 	function() {
 
@@ -706,4 +706,3 @@
 		
 	})()
 };
-return tinyDeskData;
