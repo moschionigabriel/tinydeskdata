@@ -530,10 +530,18 @@
 
 					for(model of obj.models) {
 						let run_query;
-						if (obj.write_disposition == 'append') {
-							run_query = `INSERT INTO ${obj.config.credentials.project_name}.${model.schema_name}.${model.name} (${model.compiled_code})`
+						if (model.write_disposition == 'append') {
+							if (model.partition_column) {
+								run_query = `INSERT INTO ${obj.config.credentials.project_name}.${model.schema_name}.${model.name} (${model.compiled_code} PARTITION BY ${model.partition_column})  `
+							} else {
+								run_query = `INSERT INTO ${obj.config.credentials.project_name}.${model.schema_name}.${model.name} (${model.compiled_code})`
+							}	
 						} else {
-							run_query = `CREATE OR REPLACE ${model.materialized.toUpperCase()} ${obj.config.credentials.project_name}.${model.schema_name}.${model.name} AS (${model.compiled_code})`
+							if (model.partition_column) {
+								run_query = `CREATE OR REPLACE ${model.materialized.toUpperCase()} ${obj.config.credentials.project_name}.${model.schema_name}.${model.name} AS (${model.compiled_code} PARTITION BY ${model.partition_column}) `
+							} else {
+								run_query = `CREATE OR REPLACE ${model.materialized.toUpperCase()} ${obj.config.credentials.project_name}.${model.schema_name}.${model.name} AS (${model.compiled_code})`
+							}
 						}
 						//console.log(run_query)
 						runDDL(obj.config.credentials.project_name,run_query)
