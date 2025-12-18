@@ -44,8 +44,9 @@
 					} else if (obj.source.where == 'here') {
 						
 						let parent_folder = (obj.source.config.parent_folder) ? obj.source.config.parent_folder + '/' : ''
-          				let file_name = parent_folder + obj.source.config.file_name
-						let file_extension = file_name.match(/\.(.*)/)[1]
+          	let file_name = parent_folder + obj.source.config.file_name
+						console.log(file_name)
+            let file_extension = file_name.match(/\.(.*)/)[1]
 						let platform = obj.source.config.platform
 
 						if (file_extension == 'sql' && platform == 'bigquery') {
@@ -62,9 +63,12 @@
 						data.unshift(header)
 						return data
 						} else if (file_extension == 'gs') {
-						let result = eval(HtmlService.createHtmlOutputFromFile(file_name).getContent().toString().replace(/\n/g,''))
-						data = result
-						return data 
+
+              let rawContent = HtmlService.createHtmlOutputFromFile(file_name).getContent();
+              let result = eval("(function(){ " + rawContent + " })()");
+						  result = eval(HtmlService.createHtmlOutputFromFile(file_name).getContent().toString().replace(/\n/g,''))
+						  data = result
+						  return data 
 						}
 
 					} else if (obj.source.where == 'sql_platform') {
