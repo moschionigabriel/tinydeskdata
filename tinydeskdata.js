@@ -43,7 +43,8 @@
 						} 
 					} else if (obj.source.where == 'here') {
 						
-						let file_name = obj.source.config.file_name
+						let parent_folder = (obj.parent_folder) ? obj.parent_folder + '/' : ''
+          				let file_name = parent_folder + obj.source.config.file_name
 						let file_extension = file_name.match(/\.(.*)/)[1]
 						let platform = obj.source.config.platform
 
