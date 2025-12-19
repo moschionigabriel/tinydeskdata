@@ -64,9 +64,8 @@
 						return data
 						} else if (file_extension == 'gs') {
 
-              let rawContent = HtmlService.createHtmlOutputFromFile(file_name).getContent();
-              let result = eval("(function(){ " + rawContent + " })()");
-						  result = eval(HtmlService.createHtmlOutputFromFile(file_name).getContent().toString().replace(/\n/g,''))
+              			  let rawContent = HtmlService.createHtmlOutputFromFile(file_name).getContent();
+              			  let result = eval("(function(){ " + rawContent + " })()");
 						  data = result
 						  return data 
 						}
