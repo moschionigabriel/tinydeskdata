@@ -64,10 +64,8 @@
 						return data
 						} else if (file_extension == 'gs') {
 
-              			  let rawContent = HtmlService.createHtmlOutputFromFile(file_name).getContent();
-              			  let result = eval("(function(){ " + rawContent + " })()");
-						  data = result
-						  return data 
+              let code = HtmlService.createHtmlOutputFromFile(file_name).getContent();
+              data = eval(code);
 						}
 
 					} else if (obj.source.where == 'sql_platform') {
