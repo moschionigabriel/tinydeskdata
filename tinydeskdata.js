@@ -7,20 +7,18 @@
 			let data;
 			if (obj.source.where == 'drive') {
 				let file_id = obj.source.config.file_id;
-				let file, sheet_name, sheet;
 				let mimeType = Drive.Files.get(file_id).mimeType;
 				
 				if (mimeType == 'application/vnd.google-apps.spreadsheet') {
-					file = SpreadsheetApp.openById(file_id);
-					sheet_name = obj.source.config.sheet_name || file.getSheets()[0].getName();
-					sheet = file.getSheetByName(sheet_name);
-					return sheet.getDataRange().getDisplayValues();
+					let file = SpreadsheetApp.openById(file_id);
+					let sheet_name = obj.source.config.sheet_name || file.getSheets()[0].getName();
+					return file.getSheetByName(sheet_name).getDataRange().getDisplayValues();
 				}
 				else if (mimeType == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
-					file = DriveApp.getFileById(file_id);
+					let file = DriveApp.getFileById(file_id);
 					let temp_file = Drive.Files.create({ title: "temp_tdp", mimeType: MimeType.GOOGLE_SHEETS }, file.getBlob());
 					let file_temp = SpreadsheetApp.openById(temp_file.id);
-					sheet_name = obj.source.config.sheet_name || file_temp.getSheets()[0].getName();
+					let sheet_name = obj.source.config.sheet_name || file_temp.getSheets()[0].getName();
 					data = file_temp.getSheetByName(sheet_name).getDataRange().getDisplayValues();
 					Drive.Files.remove(temp_file.id);
 					return data;
@@ -225,8 +223,9 @@
 				let job = BigQuery.Jobs.insert(jobResource, projectId);
 				while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(1000);
 
+				// Executa testes e anexa resultado ao modelo
 				let testResults = _modelRunTests(obj, m, tempTableName);
-				m.test_results = testResults.details; // Salva no model para o log
+				m.test_results = testResults.details; 
 
 				if (testResults.pass) {
 					if (materialized === 'view') {
@@ -246,9 +245,10 @@
 					}
 					_applyMetadata(projectId, m);
 					BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
+					console.log(`[OK] ${m.name} tests ok.`);
 				} else {
 					BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
-					throw new Error(`[CRITICAL] tests failed at ${m.name}. aborting pipeline.`);
+					throw new Error(`[CRITICAL] tests failed at ${m.name}. pipeline aborted.`);
 				}
 			});
 			return obj;
@@ -292,21 +292,11 @@
 				node.start = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
 				
 				let runner = (node.type == 'move') ? pubApi.move : pubApi.model;
-				let result;
 				
 				if (Array.isArray(node.info)) {
-					result = node.info.map(item => runner(item));
+					node.info = node.info.map(item => runner(item));
 				} else {
-					result = runner(node.info);
-				}
-
-				// Captura os resultados dos testes para o Log
-				if (node.type === 'model') {
-					let models = Array.isArray(result) ? result.flatMap(r => r.models) : result.models;
-					node.test_summary = models.map(m => ({
-						model: m.name,
-						results: m.test_results || []
-					}));
+					node.info = runner(node.info);
 				}
 
 				node.end = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
