@@ -202,10 +202,10 @@
 					if (query) {
 						let testRes = BigQuery.Jobs.query({ query: query, useLegacySql: false }, projectId);
 						if (parseInt(testRes.totalRows) > 0) {
-							console.error(`[FAIL] Teste '${testName}' falhou em ${m.name}.${col.name}`);
+							console.error(`[FAIL] test '${testName}' in ${m.name}.${col.name}`);
 							allTestsPass = false;
 						} else {
-							console.log(`[PASS] Teste '${testName}' em ${m.name}.${col.name}`);
+							console.log(`[PASS] test '${testName}' in ${m.name}.${col.name}`);
 						}
 					}
 				});
@@ -266,7 +266,7 @@
 					BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
 				} else {
 					BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
-					throw new Error(`[ABORTED] Model ${m.name} interrompido por falha nos testes.`);
+					throw new Error(`[ABORTED] model ${m.name} failed tests.`);
 				}
 			});
 			return obj;
@@ -287,7 +287,7 @@
 					});
 				}
 				BigQuery.Tables.patch(patchResource, projectId, m.schema_name, m.name);
-			} catch (err) { console.warn('Erro metadados ' + m.name + ': ' + err); }
+			} catch (err) { console.warn('metadata error ' + m.name + ': ' + err); }
 		}
 
 		// --- ORQUESTRAÇÃO ---
