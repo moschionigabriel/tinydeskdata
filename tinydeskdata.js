@@ -176,13 +176,46 @@
 
 		function _modelExecute(obj) {
 			obj.models.forEach(m => {
-				let fullTable = `${obj.config.credentials.project_id}.${m.schema_name}.${m.name}`;
-				let sql = (m.write_disposition == 'append') ? 
-					`INSERT INTO ${fullTable} (${m.compiled_code}${m.partition_column ? ' PARTITION BY ' + m.partition_column : ''})` :
-					`CREATE OR REPLACE ${m.materialized.toUpperCase()} ${fullTable} AS (${m.compiled_code}${m.partition_column ? ' PARTITION BY ' + m.partition_column : ''})`;
-				let res = BigQuery.Jobs.query({ query: sql, useLegacySql: false }, obj.config.credentials.project_id);
-				while (BigQuery.Jobs.get(obj.config.credentials.project_id, res.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(2000);
+				let projectId = obj.config.credentials.project_id;
+				let fullTable = `${projectId}.${m.schema_name}.${m.name}`;
+				let sql = "";
+
+				// 1. Verificar se a tabela existe consultando o INFORMATION_SCHEMA
+				const checkTableSql = `
+				SELECT size_bytes 
+				FROM \`${projectId}.${m.schema_name}.__TABLES__\` 
+				WHERE table_id = '${m.name}'
+				`;
+				
+				let tableExists = false;
+				try {
+				let queryResults = BigQuery.Jobs.query({ query: checkTableSql, useLegacySql: false }, projectId);
+				tableExists = queryResults.totalRows && queryResults.totalRows !== "0";
+				} catch (e) {
+				tableExists = false;
+				}
+
+				// 2. Lógica de decisão do SQL
+				if (m.write_disposition === 'append' && tableExists) {
+				// Se for append e a tabela existe: INSERT
+				sql = `INSERT INTO \`${fullTable}\` (${m.compiled_code})`;
+				} else {
+				// Se for replace OU se for append mas a tabela NÃO existe: CREATE
+				// Note que para o CREATE, usamos a sintaxe AS (seleção)
+				sql = `CREATE OR REPLACE ${m.materialized.toUpperCase()} \`${fullTable}\` 
+						${m.partition_column ? 'PARTITION BY ' + m.partition_column : ''} 
+						AS (${m.compiled_code})`;
+				}
+
+				// 3. Execução do Job
+				let res = BigQuery.Jobs.query({ query: sql, useLegacySql: false }, projectId);
+				
+				// Aguarda a conclusão
+				while (BigQuery.Jobs.get(projectId, res.jobReference.jobId).status.state !== 'DONE') {
+				Utilities.sleep(2000);
+				}
 			});
+			
 			return obj;
 		}
 
