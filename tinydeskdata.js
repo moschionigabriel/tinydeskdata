@@ -177,43 +177,71 @@
 		function _modelExecute(obj) {
 			obj.models.forEach(m => {
 				let projectId = obj.config.credentials.project_id;
+				let materialized = m.materialized ? m.materialized.toLowerCase() : 'table';
 				
-				// Configuramos o Job de Consulta
+				// --- CENÁRIO A: VIEW ---
+				if (materialized === 'view') {
+				let tableResource = {
+					tableReference: {
+					projectId: projectId,
+					datasetId: m.schema_name,
+					tableId: m.name
+					},
+					view: {
+					query: m.compiled_code,
+					useLegacySql: false
+					}
+				};
+
+				try {
+					// Tenta criar a view. Se já existir, deletamos e criamos de novo (equivalente ao OR REPLACE)
+					BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
+				} catch (err) {
+					if (err.message.includes('alreadyExists')) {
+					BigQuery.Tables.remove(projectId, m.schema_name, m.name);
+					BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
+					} else {
+					throw err;
+					}
+				}
+				console.log(`View ${m.name} atualizada com sucesso.`);
+
+				// --- CENÁRIO B: TABLE OU INSERT ---
+				} else {
+				let isInsertMode = (materialized === 'insert');
+				let disposition = (isInsertMode || m.write_disposition === 'append') ? 'WRITE_APPEND' : 'WRITE_TRUNCATE';
+
 				let jobResource = {
-				configuration: {
+					configuration: {
 					query: {
-					query: m.compiled_code, // Seu SELECT puro (sem o INSERT ou CREATE)
-					useLegacySql: false,
-					destinationTable: {
+						query: m.compiled_code,
+						useLegacySql: false,
+						destinationTable: {
 						projectId: projectId,
 						datasetId: m.schema_name,
 						tableId: m.name
-					},
-					// Se m.write_disposition for 'append', ele adiciona. 
-					// Se for 'replace' ou qualquer outra coisa, ele sobrescreve (WRITE_TRUNCATE).
-					writeDisposition: (m.write_disposition === 'append') ? 'WRITE_APPEND' : 'WRITE_TRUNCATE',
-					createDisposition: 'CREATE_IF_NEEDED'
+						},
+						writeDisposition: disposition,
+						createDisposition: 'CREATE_IF_NEEDED'
 					}
-				}
+					}
 				};
 
-				// Adiciona o particionamento se existir no seu objeto m
 				if (m.partition_column) {
-				jobResource.configuration.query.timePartitioning = {
-					type: 'DAY', // Ou 'HOUR', 'MONTH', dependendo da sua necessidade
+					jobResource.configuration.query.timePartitioning = {
+					type: 'DAY',
 					field: m.partition_column
-				};
+					};
 				}
 
-				// Executa o Job
 				let job = BigQuery.Jobs.insert(jobResource, projectId);
-				
-				// Monitora até terminar
 				while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') {
-				Utilities.sleep(2000);
+					Utilities.sleep(2000);
+				}
+				console.log(`Tabela ${m.name} processada via Job (${disposition}).`);
 				}
 			});
-			
+
 			return obj;
 		}
 
