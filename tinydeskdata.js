@@ -695,7 +695,7 @@
 					let filename = "log_" + obj.name + ".json";
 					let mimeType = MimeType.PLAIN_TEXT;
 
-					let folderId = obj.log_destiny.folder_id; 
+					let folderId = obj.log_destination.folder_id; 
 					let folder = DriveApp.getFolderById(folderId);
 					folder.createFile(filename, jsonString, mimeType);
 					
