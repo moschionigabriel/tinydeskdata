@@ -1,7 +1,7 @@
 (function() {
 	var tinyDeskData = (function() {
 
-		// --- MÉTODOS PRIVADOS (Invisíveis no console.log) ---
+		// --- MÉTODOS PRIVADOS ---
 
 		function _moveGetData(obj) {
 			let data;
@@ -80,16 +80,14 @@
 						if (obj.destination.config.folder_id) Drive.Files.update({}, file.id, null, { addParents: obj.destination.config.folder_id, removeParents: file.parents });
 					}
 					SpreadsheetApp.flush();
-				} else if (obj.destination.config.file_type == 'xlsx' || obj.destination.config.file_type == 'csv') {
-                    if (obj.destination.config.file_type == 'csv') {
-                        let csvContent = data.map(row => row.map(c => {
-                            let s = String(c);
-                            return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s;
-                        }).join(',')).join('\n');
-                        let fileName = obj.destination.config.file_name.endsWith('.csv') ? obj.destination.config.file_name : obj.destination.config.file_name + '.csv';
-                        let folder = DriveApp.getFolderById(obj.destination.config.folder_id || DriveApp.getRootFolder().getId());
-                        folder.createFile(fileName, '\ufeff' + csvContent, MimeType.CSV);
-                    }
+				} else if (obj.destination.config.file_type == 'csv') {
+                    let csvContent = data.map(row => row.map(c => {
+                        let s = String(c);
+                        return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s;
+                    }).join(',')).join('\n');
+                    let fileName = obj.destination.config.file_name.endsWith('.csv') ? obj.destination.config.file_name : obj.destination.config.file_name + '.csv';
+                    let folder = DriveApp.getFolderById(obj.destination.config.folder_id || DriveApp.getRootFolder().getId());
+                    folder.createFile(fileName, '\ufeff' + csvContent, MimeType.CSV);
                 }
 			} else if (obj.destination.where == 'sql_platform' && obj.destination.config.platform == 'bigquery') {
 				let bq_id = obj.destination.config.credentials.project_id;
@@ -171,12 +169,11 @@
 			return obj;
 		}
 
-		// --- MÉTODOS DE TESTE E EXECUÇÃO ---
-
 		function _modelRunTests(obj, m, tempTableName) {
-			if (!m.columns) return true;
+			let testResults = { pass: true, details: [] };
+			if (!m.columns) return testResults;
+			
 			let projectId = obj.config.credentials.project_id;
-			let allTestsPass = true;
 
 			m.columns.forEach(col => {
 				if (!col.tests) return;
@@ -185,7 +182,7 @@
 					let tableRef = `\`${projectId}.${m.schema_name}.${tempTableName}\``;
 					let query = "";
 
-					if (testName === 'unique') query = `SELECT ${col.name} FROM ${tableRef} GROUP BY 1 HAVING COUNT(*) > 1 LIMIT 1`;
+					if (testName === 'unique') query = `SELECT ${col.name}, COUNT(*) as c FROM ${tableRef} GROUP BY 1 HAVING c > 1 LIMIT 1`;
 					else if (testName === 'not null') query = `SELECT ${col.name} FROM ${tableRef} WHERE ${col.name} IS NULL LIMIT 1`;
 					else if (testName === 'accepted_values') {
 						let values = test.accepted_values.values.map(v => `'${v}'`).join(',');
@@ -201,16 +198,15 @@
 
 					if (query) {
 						let testRes = BigQuery.Jobs.query({ query: query, useLegacySql: false }, projectId);
-						if (parseInt(testRes.totalRows) > 0) {
-							console.error(`[FAIL] test '${testName}' in ${m.name}.${col.name}`);
-							allTestsPass = false;
-						} else {
-							console.log(`[PASS] test '${testName}' in ${m.name}.${col.name}`);
-						}
+						let failCount = parseInt(testRes.totalRows);
+						let status = failCount === 0 ? 'PASS' : 'FAIL';
+						
+						testResults.details.push({ column: col.name, test: testName, status: status, rows_failed: failCount });
+						if (status === 'FAIL') testResults.pass = false;
 					}
 				});
 			});
-			return allTestsPass;
+			return testResults;
 		}
 
 		function _modelExecute(obj) {
@@ -219,54 +215,40 @@
 				let materialized = (m.materialized || 'table').toLowerCase();
 				let tempTableName = m.name + "__tmp";
 
-				// 1. Criar Tabela Temporária de Staging
 				let jobResource = {
-					configuration: {
-						query: {
-							query: m.compiled_code,
-							useLegacySql: false,
-							destinationTable: { projectId: projectId, datasetId: m.schema_name, tableId: tempTableName },
-							writeDisposition: 'WRITE_TRUNCATE',
-							createDisposition: 'CREATE_IF_NEEDED'
-						}
-					}
+					configuration: { query: {
+						query: m.compiled_code, useLegacySql: false,
+						destinationTable: { projectId: projectId, datasetId: m.schema_name, tableId: tempTableName },
+						writeDisposition: 'WRITE_TRUNCATE', createDisposition: 'CREATE_IF_NEEDED'
+					}}
 				};
 				let job = BigQuery.Jobs.insert(jobResource, projectId);
 				while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(1000);
 
-				// 2. Rodar Testes na Temporária
-				if (_modelRunTests(obj, m, tempTableName)) {
-					// 3. Se passou, promover para Produção
+				let testResults = _modelRunTests(obj, m, tempTableName);
+				m.test_results = testResults.details; // Salva no model para o log
+
+				if (testResults.pass) {
 					if (materialized === 'view') {
-						let tableResource = {
-							tableReference: { projectId: projectId, datasetId: m.schema_name, tableId: m.name },
-							view: { query: m.compiled_code, useLegacySql: false }
-						};
-						try { BigQuery.Tables.remove(projectId, m.schema_name, m.name); } catch (e) {}
-						BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
+						let viewRes = { tableReference: { projectId, datasetId: m.schema_name, tableId: m.name }, view: { query: m.compiled_code, useLegacySql: false } };
+						try { BigQuery.Tables.remove(projectId, m.schema_name, m.name); } catch(e){}
+						BigQuery.Tables.insert(viewRes, projectId, m.schema_name);
 					} else {
 						let isAppend = (materialized === 'insert' || m.write_disposition === 'append');
-						let copyJob = {
-							configuration: {
-								query: {
-									query: `SELECT * FROM \`${projectId}.${m.schema_name}.${tempTableName}\``,
-									destinationTable: { projectId: projectId, datasetId: m.schema_name, tableId: m.name },
-									writeDisposition: isAppend ? 'WRITE_APPEND' : 'WRITE_TRUNCATE',
-									useLegacySql: false
-								}
-							}
-						};
+						let copyJob = { configuration: { query: {
+							query: `SELECT * FROM \`${projectId}.${m.schema_name}.${tempTableName}\``,
+							destinationTable: { projectId, datasetId: m.schema_name, tableId: m.name },
+							writeDisposition: isAppend ? 'WRITE_APPEND' : 'WRITE_TRUNCATE', useLegacySql: false
+						}}};
 						if (m.partition_column) copyJob.configuration.query.timePartitioning = { type: 'DAY', field: m.partition_column };
 						let res = BigQuery.Jobs.insert(copyJob, projectId);
 						while (BigQuery.Jobs.get(projectId, res.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(1000);
 					}
-					
-					// 4. Metadados e Limpeza
 					_applyMetadata(projectId, m);
 					BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
 				} else {
 					BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
-					throw new Error(`[ABORTED] model ${m.name} failed tests.`);
+					throw new Error(`[CRITICAL] Testes falharam em ${m.name}. Interrompendo pipeline.`);
 				}
 			});
 			return obj;
@@ -276,18 +258,17 @@
 			if (!m.description && !m.columns) return;
 			try {
 				let table = BigQuery.Tables.get(projectId, m.schema_name, m.name);
-				let patchResource = {};
-				if (m.description) patchResource.description = m.description;
+				let patchResource = { description: m.description };
 				if (m.columns && table.schema && table.schema.fields) {
 					patchResource.schema = { fields: table.schema.fields };
-					patchResource.schema.fields.forEach(field => {
-						let colConfig = m.columns.find(c => c.name === field.name);
-						if (colConfig && colConfig.description) field.description = colConfig.description;
-						delete field.precision; delete field.scale;
+					patchResource.schema.fields.forEach(f => {
+						let cfg = m.columns.find(c => c.name === f.name);
+						if (cfg && cfg.description) f.description = cfg.description;
+						delete f.precision; delete f.scale;
 					});
 				}
 				BigQuery.Tables.patch(patchResource, projectId, m.schema_name, m.name);
-			} catch (err) { console.warn('metadata error ' + m.name + ': ' + err); }
+			} catch (e) {}
 		}
 
 		// --- ORQUESTRAÇÃO ---
@@ -309,9 +290,25 @@
 			obj.log.nodes.forEach(node => {
 				console.log('starting node: ' + node.name);
 				node.start = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+				
 				let runner = (node.type == 'move') ? pubApi.move : pubApi.model;
-				if (Array.isArray(node.info)) node.info.forEach(item => runner(item));
-				else runner(node.info);
+				let result;
+				
+				if (Array.isArray(node.info)) {
+					result = node.info.map(item => runner(item));
+				} else {
+					result = runner(node.info);
+				}
+
+				// Captura os resultados dos testes para o Log
+				if (node.type === 'model') {
+					let models = Array.isArray(result) ? result.flatMap(r => r.models) : result.models;
+					node.test_summary = models.map(m => ({
+						model: m.name,
+						results: m.test_results || []
+					}));
+				}
+
 				node.end = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
 			});
 			return obj;
@@ -322,36 +319,22 @@
 			let folderId = obj.log_destination.folder_id;
             if (folderId) {
                 let folder = DriveApp.getFolderById(folderId);
-                folder.createFile("log_" + obj.name + ".json", JSON.stringify(obj.log, null, 2), MimeType.PLAIN_TEXT);
+                folder.createFile("log_" + obj.name + "_" + Date.now() + ".json", JSON.stringify(obj.log, null, 2), MimeType.PLAIN_TEXT);
             }
 			return obj;
 		}
 
-		// --- API PÚBLICA ---
-
 		const api = {
 			move: function(obj) { return _moveLoadData(obj, _moveGetData(obj)); },
 			model: function(obj) {
-				return _pipeline(obj,
-					_modelGetRawCode,
-					_modelSetDependencies,
-					(o) => { o.models = _topologicalSort(o.models, "name", "depends_on"); return o; },
-					_modelCompile,
-					_modelExecute
-				);
+				return _pipeline(obj, _modelGetRawCode, _modelSetDependencies, (o) => { o.models = _topologicalSort(o.models, "name", "depends_on"); return o; }, _modelCompile, _modelExecute);
 			},
 			orchestrate: function(obj) {
-				return _pipeline(obj,
-					_orchestrateCreateLog,
-					(o) => { o.log.nodes = _topologicalSort(o.log.nodes, "name", "depends_on"); return o; },
-					(o) => _orchestrateExecute(o, api),
-					_orchestrateEndLog
-				);
+				return _pipeline(obj, _orchestrateCreateLog, (o) => { o.log.nodes = _topologicalSort(o.log.nodes, "name", "depends_on"); return o; }, (o) => _orchestrateExecute(o, api), _orchestrateEndLog);
 			}
 		};
 
 		return api;
-
 	})();
 
 	this.tinyDeskData = tinyDeskData;
