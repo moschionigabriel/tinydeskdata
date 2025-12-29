@@ -248,7 +248,7 @@
 					console.log(`[OK] ${m.name} tests ok.`);
 				} else {
 					BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
-					throw new Error(`[CRITICAL] tests failed at ${m.name}. pipeline aborted.`);
+					throw new Error(`[CRITICAL] tests failed in ${m.name}. pipeline aborted.`);
 				}
 			});
 			return obj;
