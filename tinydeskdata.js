@@ -225,7 +225,13 @@
 		const api = {
 			move: function(obj) { return _moveLoadData(obj, _moveGetData(obj)); },
 			model: function(obj) {
-				return _pipeline(obj, _modelGetRawCode, _modelSetDependencies, (o) => { o.models = _topologicalSort(o.models, "name", "depends_on"); return o; }, _modelCompile, _modelExecute);
+				return _pipeline(obj,
+					_modelGetRawCode,
+					_modelSetDependencies,
+					(o) => { o.models = _topologicalSort(o.models, "name", "depends_on"); return o; },
+					_modelCompile,
+					_modelExecute
+				);
 			},
 			orchestrate: function(obj) {
 				return _pipeline(obj,
