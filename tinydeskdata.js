@@ -179,20 +179,17 @@
 				let projectId = obj.config.credentials.project_id;
 				let materialized = m.materialized ? m.materialized.toLowerCase() : 'table';
 				
-				// --- 1. CRIAÇÃO INICIAL (Sem Schema para evitar o erro) ---
+				// --- 1. CRIAÇÃO DA VIEW OU TABELA ---
 				if (materialized === 'view') {
 					let tableResource = {
 						tableReference: { projectId: projectId, datasetId: m.schema_name, tableId: m.name },
 						view: { query: m.compiled_code, useLegacySql: false }
 					};
-
 					try { BigQuery.Tables.remove(projectId, m.schema_name, m.name); } catch (e) {}
 					BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
-
 				} else {
 					let isInsertMode = (materialized === 'insert');
 					let disposition = (isInsertMode || m.write_disposition === 'append') ? 'WRITE_APPEND' : 'WRITE_TRUNCATE';
-
 					let jobResource = {
 						configuration: {
 							query: {
@@ -204,21 +201,19 @@
 							}
 						}
 					};
-
 					if (m.partition_column) {
 						jobResource.configuration.query.timePartitioning = { type: 'DAY', field: m.partition_column };
 					}
-
 					let job = BigQuery.Jobs.insert(jobResource, projectId);
 					while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') {
 						Utilities.sleep(2000);
 					}
 				}
 
-				// --- 2. ATUALIZAÇÃO DOS METADADOS (PATCH) ---
+				// --- 2. ATUALIZAÇÃO DOS METADADOS (SEM ALTERAR TIPOS) ---
 				if (m.description || m.columns) {
 					try {
-						// Para injetar descrições, precisamos primeiro ler o esquema que o BQ gerou automaticamente
+						// Buscamos a tabela para pegar os tipos REAIS detectados pelo BigQuery
 						let table = BigQuery.Tables.get(projectId, m.schema_name, m.name);
 						let needsUpdate = false;
 
@@ -232,8 +227,8 @@
 								let colConfig = m.columns.find(c => c.name === field.name);
 								if (colConfig && colConfig.description) {
 									field.description = colConfig.description;
-									// Como você quer forçar STRING (exceto partição), garantimos aqui:
-									field.type = (field.name === m.partition_column ? 'DATE' : 'STRING');
+									// IMPORTANTE: Não alteramos o field.type. 
+									// Mantemos o que o BQ detectou para evitar o erro de Schema Mismatch.
 									needsUpdate = true;
 								}
 							});
@@ -243,11 +238,10 @@
 							BigQuery.Tables.patch(table, projectId, m.schema_name, m.name);
 						}
 					} catch (err) {
-						console.warn('Aviso: Falha ao aplicar descrições em ' + m.name + ': ' + err);
+						console.warn('Falha ao aplicar descrições em ' + m.name + ': ' + err);
 					}
 				}
 			});
-
 			return obj;
 		}
 
