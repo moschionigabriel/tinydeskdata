@@ -249,6 +249,68 @@
 			return obj;
 		}
 
+		function _modelTest(obj) {
+			let projectId = obj.config.credentials.project_id;
+			let results = [];
+
+			obj.models.forEach(m => {
+				if (!m.columns) return;
+
+				m.columns.forEach(col => {
+					if (!col.tests) return;
+
+					col.tests.forEach(test => {
+						let testName = typeof test === 'string' ? test : Object.keys(test)[0];
+						let query = "";
+						let tableRef = `\`${projectId}.${m.schema_name}.${m.name}\``;
+
+						// --- Lógica de Geração de Queries de Teste ---
+						if (testName === 'unique') {
+							query = `SELECT ${col.name}, COUNT(*) as count FROM ${tableRef} GROUP BY 1 HAVING count > 1`;
+						} 
+						else if (testName === 'not null') {
+							query = `SELECT * FROM ${tableRef} WHERE ${col.name} IS NULL`;
+						} 
+						else if (testName === 'accepted_values') {
+							let values = test.accepted_values.values.map(v => `'${v}'`).join(',');
+							query = `SELECT ${col.name} FROM ${tableRef} WHERE ${col.name} NOT IN (${values})`;
+						} 
+						else if (testName === 'relationships') {
+							// Resolve o ref("modelo") para o nome real da tabela
+							let toRef = test.relationships[0].to.match(/['"]([^'"]+)['"]/)[1];
+							let toField = test.relationships[1].field;
+							let targetModel = obj.models.find(mod => mod.name === toRef);
+							let targetTable = `\`${projectId}.${targetModel.schema_name}.${targetModel.name}\``;
+							
+							query = `SELECT a.${col.name} FROM ${tableRef} a LEFT JOIN ${targetTable} b ON a.${col.name} = b.${toField} WHERE b.${toField} IS NULL AND a.${col.name} IS NOT NULL`;
+						}
+
+						if (query) {
+							try {
+								let testRes = BigQuery.Jobs.query({ query: query, useLegacySql: false }, projectId);
+								let failCount = parseInt(testRes.totalRows);
+								
+								let status = failCount === 0 ? 'PASS' : 'FAIL';
+								console.log(`[TEST ${status}] ${m.name}.${col.name} (${testName}) - Fails: ${failCount}`);
+								
+								results.push({
+									model: m.name,
+									column: col.name,
+									test: testName,
+									status: status,
+									fail_count: failCount
+								});
+							} catch (err) {
+								console.error(`Erro ao executar teste ${testName} em ${m.name}: ${err}`);
+							}
+						}
+					});
+				});
+			});
+			obj.test_results = results;
+			return obj;
+		}
+
 		function _orchestrateCreateLog(obj) {
 			obj.log = { 
 				name: obj.name, 
@@ -294,7 +356,8 @@
 					_modelSetDependencies,
 					(o) => { o.models = _topologicalSort(o.models, "name", "depends_on"); return o; },
 					_modelCompile,
-					_modelExecute
+					_modelExecute,
+					_modelTest // <--- Inserido aqui
 				);
 			},
 			orchestrate: function(obj) {
