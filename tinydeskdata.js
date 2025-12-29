@@ -179,25 +179,16 @@
 				let projectId = obj.config.credentials.project_id;
 				let materialized = m.materialized ? m.materialized.toLowerCase() : 'table';
 				
-				// --- CENÁRIO A: VIEW ---
+				// --- PASSO 1: CRIAÇÃO (VIEW OU TABLE) ---
 				if (materialized === 'view') {
 					let tableResource = {
 						tableReference: { projectId: projectId, datasetId: m.schema_name, tableId: m.name },
-						view: { query: m.compiled_code, useLegacySql: false },
-						description: m.description || ""
+						view: { query: m.compiled_code, useLegacySql: false }
 					};
-
-					// Adiciona descrições de colunas na View se existirem
-					if (m.columns) {
-						tableResource.schema = {
-							fields: m.columns.map(col => ({ name: col.name, description: col.description }))
-						};
-					}
 
 					try { BigQuery.Tables.remove(projectId, m.schema_name, m.name); } catch (e) {}
 					BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
 
-				// --- CENÁRIO B: TABLE OU INSERT ---
 				} else {
 					let isInsertMode = (materialized === 'insert');
 					let disposition = (isInsertMode || m.write_disposition === 'append') ? 'WRITE_APPEND' : 'WRITE_TRUNCATE';
@@ -222,31 +213,30 @@
 					while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') {
 						Utilities.sleep(2000);
 					}
+				}
 
-					// --- ATUALIZAÇÃO DE METADADOS (Tabela e Colunas) ---
-					if (m.description || m.columns) {
-						try {
-							// 1. Obtém os metadados atuais para não perder tipos/modos das colunas
-							let table = BigQuery.Tables.get(projectId, m.schema_name, m.name);
-							
-							// 2. Atualiza a descrição da tabela
-							if (m.description) table.description = m.description;
+				// --- PASSO 2: ATUALIZAÇÃO DE METADADOS (PATCH) ---
+				// Agora que a View ou Tabela já existe, o BigQuery já conhece os tipos (STRING, INT, etc.)
+				if (m.description || m.columns) {
+					try {
+						// Buscamos o objeto completo que o BigQuery acabou de gerar
+						let table = BigQuery.Tables.get(projectId, m.schema_name, m.name);
+						
+						if (m.description) table.description = m.description;
 
-							// 3. Atualiza a descrição das colunas se m.columns for um array
-							if (m.columns && Array.isArray(m.columns)) {
-								table.schema.fields.forEach(field => {
-									let colConfig = m.columns.find(c => c.name === field.name);
-									if (colConfig && colConfig.description) {
-										field.description = colConfig.description;
-									}
-								});
-							}
-
-							// 4. Salva as alterações via Patch
-							BigQuery.Tables.patch(table, projectId, m.schema_name, m.name);
-						} catch (err) {
-							console.log('Erro ao atualizar metadados de ' + m.name + ': ' + err);
+						if (m.columns && Array.isArray(m.columns)) {
+							table.schema.fields.forEach(field => {
+								let colConfig = m.columns.find(c => c.name === field.name);
+								if (colConfig && colConfig.description) {
+									field.description = colConfig.description;
+								}
+							});
 						}
+
+						// Enviamos de volta com as descrições preenchidas, mantendo os tipos originais
+						BigQuery.Tables.patch(table, projectId, m.schema_name, m.name);
+					} catch (err) {
+						console.log('Erro ao atualizar metadados de ' + m.name + ': ' + err);
 					}
 				}
 			});
