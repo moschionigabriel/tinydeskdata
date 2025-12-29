@@ -177,43 +177,43 @@
 		function _modelExecute(obj) {
 			obj.models.forEach(m => {
 				let projectId = obj.config.credentials.project_id;
-				let fullTable = `${projectId}.${m.schema_name}.${m.name}`;
-				let sql = "";
-
-				// 1. Verificar se a tabela existe consultando o INFORMATION_SCHEMA
-				const checkTableSql = `
-				SELECT size_bytes 
-				FROM \`${projectId}.${m.schema_name}.__TABLES__\` 
-				WHERE table_id = '${m.name}'
-				`;
 				
-				let tableExists = false;
-				try {
-				let queryResults = BigQuery.Jobs.query({ query: checkTableSql, useLegacySql: false }, projectId);
-				tableExists = queryResults.totalRows && queryResults.totalRows !== "0";
-				} catch (e) {
-				tableExists = false;
+				// Configuramos o Job de Consulta
+				let jobResource = {
+				configuration: {
+					query: {
+					query: m.compiled_code, // Seu SELECT puro (sem o INSERT ou CREATE)
+					useLegacySql: false,
+					destinationTable: {
+						projectId: projectId,
+						datasetId: m.schema_name,
+						tableId: m.name
+					},
+					// Se m.write_disposition for 'append', ele adiciona. 
+					// Se for 'replace' ou qualquer outra coisa, ele sobrescreve (WRITE_TRUNCATE).
+					writeDisposition: (m.write_disposition === 'append') ? 'WRITE_APPEND' : 'WRITE_TRUNCATE',
+					createDisposition: 'CREATE_IF_NEEDED'
+					}
+				}
+				};
+
+				// Adiciona o particionamento se existir no seu objeto m
+				if (m.partition_column) {
+				jobResource.configuration.query.timePartitioning = {
+					type: 'DAY', // Ou 'HOUR', 'MONTH', dependendo da sua necessidade
+					field: m.partition_column
+				};
 				}
 
-				// 2. Lógica de decisão do SQL
-				if (m.write_disposition === 'append' && tableExists) {
-				// Se for append e a tabela existe: INSERT
-				sql = `INSERT INTO \`${fullTable}\` (${m.compiled_code})`;
-				} else {
-				// Se for replace OU se for append mas a tabela NÃO existe: CREATE
-				// Note que para o CREATE, usamos a sintaxe AS (seleção)
-				sql = `CREATE OR REPLACE ${m.materialized.toUpperCase()} \`${fullTable}\` 
-						${m.partition_column ? 'PARTITION BY ' + m.partition_column : ''} 
-						AS (${m.compiled_code})`;
-				}
-
-				// 3. Execução do Job
-				let res = BigQuery.Jobs.query({ query: sql, useLegacySql: false }, projectId);
+				// Executa o Job
+				let job = BigQuery.Jobs.insert(jobResource, projectId);
 				
-				// Aguarda a conclusão
-				while (BigQuery.Jobs.get(projectId, res.jobReference.jobId).status.state !== 'DONE') {
+				// Monitora até terminar
+				console.log(`Iniciando Job para ${m.name}...`);
+				while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') {
 				Utilities.sleep(2000);
 				}
+				console.log(`Job ${m.name} finalizado.`);
 			});
 			
 			return obj;
