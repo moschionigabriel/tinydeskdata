@@ -256,6 +256,7 @@
 
 		function _orchestrateExecute(obj, pubApi) {
 			obj.log.nodes.forEach(node => {
+				console.log('iniciando nó: ' + node.name);
 				node.start = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
 				let runner = (node.type == 'move') ? pubApi.move : pubApi.model;
 				if (Array.isArray(node.info)) node.info.forEach(item => runner(item));
