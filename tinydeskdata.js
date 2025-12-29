@@ -209,11 +209,9 @@
 				let job = BigQuery.Jobs.insert(jobResource, projectId);
 				
 				// Monitora até terminar
-				console.log(`Iniciando Job para ${m.name}...`);
 				while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') {
 				Utilities.sleep(2000);
 				}
-				console.log(`Job ${m.name} finalizado.`);
 			});
 			
 			return obj;
