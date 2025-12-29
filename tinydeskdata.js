@@ -181,60 +181,72 @@
 				
 				// --- CENÁRIO A: VIEW ---
 				if (materialized === 'view') {
-				let tableResource = {
-					tableReference: {
-					projectId: projectId,
-					datasetId: m.schema_name,
-					tableId: m.name
-					},
-					view: {
-					query: m.compiled_code,
-					useLegacySql: false
-					}
-				};
+					let tableResource = {
+						tableReference: {
+							projectId: projectId,
+							datasetId: m.schema_name,
+							tableId: m.name
+						},
+						view: {
+							query: m.compiled_code,
+							useLegacySql: false
+						},
+						description: m.description || "" // Adiciona descrição na View
+					};
 
-				// Tenta remover a view/tabela existente primeiro (Simula o CREATE OR REPLACE)
-				try {
-					BigQuery.Tables.remove(projectId, m.schema_name, m.name);
-				} catch (e) {
-					// Se der erro aqui, é provável que a tabela não existisse, o que é ok.
-				}
+					try {
+						BigQuery.Tables.remove(projectId, m.schema_name, m.name);
+					} catch (e) {}
 
-				// Agora cria a nova View
-				BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
+					BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
 
 				// --- CENÁRIO B: TABLE OU INSERT ---
 				} else {
-				let isInsertMode = (materialized === 'insert');
-				let disposition = (isInsertMode || m.write_disposition === 'append') ? 'WRITE_APPEND' : 'WRITE_TRUNCATE';
+					let isInsertMode = (materialized === 'insert');
+					let disposition = (isInsertMode || m.write_disposition === 'append') ? 'WRITE_APPEND' : 'WRITE_TRUNCATE';
 
-				let jobResource = {
-					configuration: {
-					query: {
-						query: m.compiled_code,
-						useLegacySql: false,
-						destinationTable: {
-						projectId: projectId,
-						datasetId: m.schema_name,
-						tableId: m.name
-						},
-						writeDisposition: disposition,
-						createDisposition: 'CREATE_IF_NEEDED'
-					}
-					}
-				};
-
-				if (m.partition_column) {
-					jobResource.configuration.query.timePartitioning = {
-					type: 'DAY',
-					field: m.partition_column
+					let jobResource = {
+						configuration: {
+							query: {
+								query: m.compiled_code,
+								useLegacySql: false,
+								destinationTable: {
+									projectId: projectId,
+									datasetId: m.schema_name,
+									tableId: m.name
+								},
+								writeDisposition: disposition,
+								createDisposition: 'CREATE_IF_NEEDED'
+							}
+						}
 					};
-				}
 
-				let job = BigQuery.Jobs.insert(jobResource, projectId);
-				while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') {
-					Utilities.sleep(2000);
-				}
+					if (m.partition_column) {
+						jobResource.configuration.query.timePartitioning = {
+							type: 'DAY',
+							field: m.partition_column
+						};
+					}
+
+					let job = BigQuery.Jobs.insert(jobResource, projectId);
+					
+					// Aguarda a conclusão do Job
+					while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') {
+						Utilities.sleep(2000);
+					}
+
+					// --- NOVO: ATUALIZAÇÃO DA DESCRIÇÃO (PATCH) ---
+					if (m.description) {
+						try {
+							let tableMeta = {
+								description: m.description
+							};
+							// O método patch atualiza apenas os campos enviados (neste caso, description)
+							BigQuery.Tables.patch(tableMeta, projectId, m.schema_name, m.name);
+						} catch (err) {
+							console.log('Erro ao atualizar descrição da tabela ' + m.name + ': ' + err);
+						}
+					}
 				}
 			});
 
