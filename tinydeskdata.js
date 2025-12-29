@@ -248,7 +248,7 @@
 					BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
 				} else {
 					BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
-					throw new Error(`[CRITICAL] Testes falharam em ${m.name}. Interrompendo pipeline.`);
+					throw new Error(`[CRITICAL] tests failed at ${m.name}. aborting pipeline.`);
 				}
 			});
 			return obj;
