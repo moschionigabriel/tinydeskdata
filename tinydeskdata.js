@@ -182,22 +182,19 @@
 				// --- CENÁRIO A: VIEW ---
 				if (materialized === 'view') {
 					let tableResource = {
-						tableReference: {
-							projectId: projectId,
-							datasetId: m.schema_name,
-							tableId: m.name
-						},
-						view: {
-							query: m.compiled_code,
-							useLegacySql: false
-						},
-						description: m.description || "" // Adiciona descrição na View
+						tableReference: { projectId: projectId, datasetId: m.schema_name, tableId: m.name },
+						view: { query: m.compiled_code, useLegacySql: false },
+						description: m.description || ""
 					};
 
-					try {
-						BigQuery.Tables.remove(projectId, m.schema_name, m.name);
-					} catch (e) {}
+					// Adiciona descrições de colunas na View se existirem
+					if (m.columns) {
+						tableResource.schema = {
+							fields: m.columns.map(col => ({ name: col.name, description: col.description }))
+						};
+					}
 
+					try { BigQuery.Tables.remove(projectId, m.schema_name, m.name); } catch (e) {}
 					BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
 
 				// --- CENÁRIO B: TABLE OU INSERT ---
@@ -210,11 +207,7 @@
 							query: {
 								query: m.compiled_code,
 								useLegacySql: false,
-								destinationTable: {
-									projectId: projectId,
-									datasetId: m.schema_name,
-									tableId: m.name
-								},
+								destinationTable: { projectId: projectId, datasetId: m.schema_name, tableId: m.name },
 								writeDisposition: disposition,
 								createDisposition: 'CREATE_IF_NEEDED'
 							}
@@ -222,29 +215,37 @@
 					};
 
 					if (m.partition_column) {
-						jobResource.configuration.query.timePartitioning = {
-							type: 'DAY',
-							field: m.partition_column
-						};
+						jobResource.configuration.query.timePartitioning = { type: 'DAY', field: m.partition_column };
 					}
 
 					let job = BigQuery.Jobs.insert(jobResource, projectId);
-					
-					// Aguarda a conclusão do Job
 					while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') {
 						Utilities.sleep(2000);
 					}
 
-					// --- NOVO: ATUALIZAÇÃO DA DESCRIÇÃO (PATCH) ---
-					if (m.description) {
+					// --- ATUALIZAÇÃO DE METADADOS (Tabela e Colunas) ---
+					if (m.description || m.columns) {
 						try {
-							let tableMeta = {
-								description: m.description
-							};
-							// O método patch atualiza apenas os campos enviados (neste caso, description)
-							BigQuery.Tables.patch(tableMeta, projectId, m.schema_name, m.name);
+							// 1. Obtém os metadados atuais para não perder tipos/modos das colunas
+							let table = BigQuery.Tables.get(projectId, m.schema_name, m.name);
+							
+							// 2. Atualiza a descrição da tabela
+							if (m.description) table.description = m.description;
+
+							// 3. Atualiza a descrição das colunas se m.columns for um array
+							if (m.columns && Array.isArray(m.columns)) {
+								table.schema.fields.forEach(field => {
+									let colConfig = m.columns.find(c => c.name === field.name);
+									if (colConfig && colConfig.description) {
+										field.description = colConfig.description;
+									}
+								});
+							}
+
+							// 4. Salva as alterações via Patch
+							BigQuery.Tables.patch(table, projectId, m.schema_name, m.name);
 						} catch (err) {
-							console.log('Erro ao atualizar descrição da tabela ' + m.name + ': ' + err);
+							console.log('Erro ao atualizar metadados de ' + m.name + ': ' + err);
 						}
 					}
 				}
