@@ -65,7 +65,7 @@
 						} else if (file_extension == 'gs') {
 
               let code = HtmlService.createHtmlOutputFromFile(file_name).getContent();
-              data = eval(code)
+              data = eval('(' + code + ')');
 						}
 
 					} else if (obj.source.where == 'sql_platform') {
