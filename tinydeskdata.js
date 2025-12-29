@@ -193,17 +193,15 @@
 					}
 				};
 
+				// Tenta remover a view/tabela existente primeiro (Simula o CREATE OR REPLACE)
 				try {
-					// Tenta criar a view. Se já existir, deletamos e criamos de novo (equivalente ao OR REPLACE)
-					BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
-				} catch (err) {
-					if (err.message.includes('alreadyExists')) {
 					BigQuery.Tables.remove(projectId, m.schema_name, m.name);
-					BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
-					} else {
-					throw err;
-					}
+				} catch (e) {
+					// Se der erro aqui, é provável que a tabela não existisse, o que é ok.
 				}
+
+				// Agora cria a nova View
+				BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
 
 				// --- CENÁRIO B: TABLE OU INSERT ---
 				} else {
