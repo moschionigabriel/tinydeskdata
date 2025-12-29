@@ -50,13 +50,13 @@
 						let platform = obj.source.config.platform
 
 						if (file_extension == 'sql' && platform == 'bigquery') {
-						let bq_project_name = obj.source.config.credentials.project_name
+						let bq_project_id = obj.source.config.credentials.project_id
 						let query_string = HtmlService.createHtmlOutputFromFile(file_name).getContent().toString().replace(/\n/g,'')
 						let request = {query: query_string,useLegacySql: false}
-						let query_result = BigQuery.Jobs.query(request, bq_project_name)
+						let query_result = BigQuery.Jobs.query(request, bq_project_id)
 						let job_id = query_result.jobReference.jobId
 						let sleepTimeMs = 500
-						while (!query_result.jobComplete) {Utilities.sleep(sleepTimeMs); queryResults = BigQuery.Jobs.getQueryResults(bq_project_name, job_id)}
+						while (!query_result.jobComplete) {Utilities.sleep(sleepTimeMs); queryResults = BigQuery.Jobs.getQueryResults(bq_project_id, job_id)}
 						let data = query_result.rows.map(row => row.f.map(cell => cell.v))
 						let fields = query_result.schema.fields;
 						let header = fields.map(field => field.name)
@@ -69,13 +69,13 @@
 						}
 
 					} else if (obj.source.where == 'sql_platform') {
-						let bq_project_name = obj.source.config.credentials.project_name
+						let bq_project_id = obj.source.config.credentials.project_id
 						let query_string = 'select * from ' + obj.source.config.schema_name + '.' + obj.source.config.table_name;
 						let request = {query: query_string,useLegacySql: false}
-						let query_result = BigQuery.Jobs.query(request, bq_project_name)
+						let query_result = BigQuery.Jobs.query(request, bq_project_id)
 						let job_id = query_result.jobReference.jobId
 						let sleepTimeMs = 500
-						while (!query_result.jobComplete) {Utilities.sleep(sleepTimeMs); queryResults = BigQuery.Jobs.getQueryResults(bq_project_name, job_id)}
+						while (!query_result.jobComplete) {Utilities.sleep(sleepTimeMs); queryResults = BigQuery.Jobs.getQueryResults(bq_project_id, job_id)}
 						let data = query_result.rows.map(row => row.f.map(cell => cell.v))
 						let fields = query_result.schema.fields;
 						let header = fields.map(field => field.name)
@@ -263,8 +263,8 @@
 						}
 					} else if (obj.destination.where == 'sql_platform') {
 						if (obj.destination.config.platform == 'bigquery') {
-							let bq_project_name, schema_name, table_name, write_disposition
-							bq_project_name = obj.destination.config.credentials.project_name
+							let bq_project_id, schema_name, table_name, write_disposition
+							bq_project_id = obj.destination.config.credentials.project_id
 							schema_name = obj.destination.config.schema_name
 							table_name = obj.destination.config.table_name
 							if(obj.destination.config.write_disposition) {write_disposition = obj.destination.config.write_disposition} else {write_disposition = 'append'}
@@ -292,7 +292,7 @@
 							configuration: {
 								load: {
 								destinationTable: {
-									projectId: bq_project_name,
+									projectId: bq_project_id,
 									datasetId: schema_name,
 									tableId: table_name
 								},
@@ -309,14 +309,14 @@
 							
 
 							try {
-							const insertJob = BigQuery.Jobs.insert(job, bq_project_name, blob);
+							const insertJob = BigQuery.Jobs.insert(job, bq_project_id, blob);
 							
 							//Logger.log('Job ID: ' + insertJob.jobReference.jobId);
 							
-							let jobStatus = BigQuery.Jobs.get(bq_project_name, insertJob.jobReference.jobId);
+							let jobStatus = BigQuery.Jobs.get(bq_project_id, insertJob.jobReference.jobId);
 							while (jobStatus.status.state !== 'DONE') {
 								Utilities.sleep(1000);
-								jobStatus = BigQuery.Jobs.get(bq_project_name, insertJob.jobReference.jobId);
+								jobStatus = BigQuery.Jobs.get(bq_project_id, insertJob.jobReference.jobId);
 							}
 							
 							if (jobStatus.status.errorResult) {
@@ -484,7 +484,7 @@
 						const nodeMap = {};
 						for (const key in obj.models) {
 						const node = obj.models[key];
-						nodeMap[node.name] = `${obj.config.credentials.project_name}.${node.schema_name}.${node.name}`;
+						nodeMap[node.name] = `${obj.config.credentials.project_id}.${node.schema_name}.${node.name}`;
 						}
 						
 						// Substitui refs no código compilado
@@ -534,19 +534,19 @@
 						let run_query;
 						if (model.write_disposition == 'append') {
 							if (model.partition_column) {
-								run_query = `INSERT INTO ${obj.config.credentials.project_name}.${model.schema_name}.${model.name} (${model.compiled_code} PARTITION BY ${model.partition_column})  `
+								run_query = `INSERT INTO ${obj.config.credentials.project_id}.${model.schema_name}.${model.name} (${model.compiled_code} PARTITION BY ${model.partition_column})  `
 							} else {
-								run_query = `INSERT INTO ${obj.config.credentials.project_name}.${model.schema_name}.${model.name} (${model.compiled_code})`
+								run_query = `INSERT INTO ${obj.config.credentials.project_id}.${model.schema_name}.${model.name} (${model.compiled_code})`
 							}	
 						} else {
 							if (model.partition_column) {
-								run_query = `CREATE OR REPLACE ${model.materialized.toUpperCase()} ${obj.config.credentials.project_name}.${model.schema_name}.${model.name} AS (${model.compiled_code} PARTITION BY ${model.partition_column}) `
+								run_query = `CREATE OR REPLACE ${model.materialized.toUpperCase()} ${obj.config.credentials.project_id}.${model.schema_name}.${model.name} AS (${model.compiled_code} PARTITION BY ${model.partition_column}) `
 							} else {
-								run_query = `CREATE OR REPLACE ${model.materialized.toUpperCase()} ${obj.config.credentials.project_name}.${model.schema_name}.${model.name} AS (${model.compiled_code})`
+								run_query = `CREATE OR REPLACE ${model.materialized.toUpperCase()} ${obj.config.credentials.project_id}.${model.schema_name}.${model.name} AS (${model.compiled_code})`
 							}
 						}
 						//console.log(run_query)
-						runDDL(obj.config.credentials.project_name,run_query)
+						runDDL(obj.config.credentials.project_id,run_query)
 					}
 					
 					return obj
