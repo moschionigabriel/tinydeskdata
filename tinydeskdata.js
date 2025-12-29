@@ -296,23 +296,27 @@
 							});
 
 							let job = {
-							configuration: {
-								load: {
-								destinationTable: {
-									projectId: bq_project_id,
-									datasetId: schema_name,
-									tableId: table_name
-								},
-								schema: table_schema,
-								sourceFormat: 'NEWLINE_DELIMITED_JSON',
-								writeDisposition: 'WRITE_' + write_disposition.toUpperCase(), 
-								autodetect: false,
-								timePartitioning: {
-									type: 'DAY', // Pode ser 'DAY', 'HOUR', 'MONTH' ou 'YEAR'
-									field: obj.destination.config.partition_column // O nome da coluna que deve ser usada para particionar
+								configuration: {
+									load: {
+										destinationTable: {
+											projectId: bq_project_id,
+											datasetId: schema_name,
+											tableId: table_name
+										},
+										schema: table_schema,
+										sourceFormat: 'NEWLINE_DELIMITED_JSON',
+										writeDisposition: 'WRITE_' + write_disposition.toUpperCase(),
+										autodetect: false
+									}
 								}
-								}
-							}
+							};
+
+							// Verificamos se existe uma coluna de partição configurada
+							if (obj.destination.config.partition_column) {
+								job.configuration.load.timePartitioning = {
+									type: 'DAY',
+									field: obj.destination.config.partition_column
+								};
 							}
 
 							let ndjson = jsonRows.map(row => JSON.stringify(row)).join('\n');
