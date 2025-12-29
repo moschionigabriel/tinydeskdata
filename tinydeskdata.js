@@ -273,10 +273,17 @@
 							let rows = data.slice(1);
 							
 							let table_schema = {
-							fields: headers.map(header => ({
-								name: String(header).replace(/[^a-zA-Z0-9_]/g, '_'), 
-								type: 'STRING'
-							}))
+								fields: headers.map(header => {
+									let cleanName = String(header).replace(/[^a-zA-Z0-9_]/g, '_');
+									
+									// Se for a coluna de partição, forçamos o tipo DATE
+									if (cleanName === obj.destination.config.partition_column) {
+									return { name: cleanName, type: 'DATE' }; 
+									}
+									
+									// Para as demais, mantém STRING
+									return { name: cleanName, type: 'STRING' };
+								})
 							};
 
 							let jsonRows = rows.map(row => {
@@ -299,7 +306,11 @@
 								schema: table_schema,
 								sourceFormat: 'NEWLINE_DELIMITED_JSON',
 								writeDisposition: 'WRITE_' + write_disposition.toUpperCase(), 
-								autodetect: false
+								autodetect: false,
+								timePartitioning: {
+									type: 'DAY', // Pode ser 'DAY', 'HOUR', 'MONTH' ou 'YEAR'
+									field: obj.destination.config.partition_column // O nome da coluna que deve ser usada para particionar
+								}
 								}
 							}
 							}
@@ -718,7 +729,7 @@
 						,_orchestrateSort
 						,_orchestrateExecute
 						,_orchestrateEndLog
-						)}
+					)}
 				}
 			}
 		)()
