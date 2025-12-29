@@ -349,7 +349,7 @@
 				}
 
 				function _pipeline(obj, ...functions) {return functions.reduce((result, fn) => fn(result), obj);}
-				function _transformGetRawCode(obj) {
+				function _modelGetRawCode(obj) {
 					let parent_folder = (obj.parent_folder) ? obj.parent_folder + '/' : ''
 					for(model of obj.models) {
 						let file_name = parent_folder + model.name + '.sql' + '.html'
@@ -357,7 +357,7 @@
 					}
 					return obj
 				}
-				function _transformSetDependencies(obj) {
+				function _modelSetDependencies(obj) {
 					for (model of obj.models) {
 						let regex = /{{\s*ref\s*\(\s*['"]([^'"]+)['"]\s*\)\s*}}/g;
 						let dependencies = [];
@@ -371,7 +371,7 @@
 					//console.log(obj)
 					return obj
 				}
-				function _transformSort(obj) {
+				function _modelSort(obj) {
 					function topologicalSortKahn(items, nameKey, dependsOnKey) {
 						// 1. Inicialização da Estrutura de Grafo
 						const graph = {}; // { 'ObjetoA': ['ObjetoB', 'ObjetoC'], ... } - Mapeia Objeto -> Sucessores
@@ -448,7 +448,7 @@
 
 
 				}
-				function _transformCompile(obj) {
+				function _modelCompile(obj) {
 					function processJinjaTemplate(code) {
 						let processedCode = code;
 						
@@ -528,7 +528,7 @@
 					
 					return obj;
 				}
-				function _transformExecute(obj) {
+				function _modelExecute(obj) {
 					function runDDL(project,sql) {
 						var queryResults = BigQuery.Jobs.query({query: sql, useLegacySql: false}, project);
 						var jobId = queryResults.jobReference.jobId;
@@ -583,7 +583,7 @@
 
 					for(node of obj.log.nodes) {
 					let source_check = (Array.isArray(node.info)) ? node.info[0] : node.info; 
-					let type = (source_check.source) ? 'move' : 'transform';
+					let type = (source_check.source) ? 'move' : 'model';
 					node.type = ''
 					node.type = type
 					}
@@ -682,12 +682,12 @@
 						} else {tinyDeskData.pipe.move(node.info)}
 						}
 
-						if(node.type == 'transform') {
+						if(node.type == 'model') {
 						if(Array.isArray(node.info)) {
 							for(item of node.info) {
-							tinyDeskData.pipe.transform(item)
+							tinyDeskData.pipe.model(item)
 							}
-						} else {tinyDeskData.pipe.transform(node.info)}
+						} else {tinyDeskData.pipe.model(node.info)}
 						}
 
 						let end = new Date();
@@ -721,12 +721,12 @@
 
 				return {
 					move: function(obj) {return _moveLoadData(obj,_moveGetData(obj))}
-					,transform : function(obj) {return _pipeline(obj
-						,_transformGetRawCode
-						,_transformSetDependencies
-						,_transformSort
-						,_transformCompile
-						,_transformExecute
+					,model : function(obj) {return _pipeline(obj
+						,_modelGetRawCode
+						,_modelSetDependencies
+						,_modelSort
+						,_modelCompile
+						,_modelExecute
 					)}
 					,orchestrate : function(obj) {return _pipeline(obj
 						,_orchestrateCreateLog
