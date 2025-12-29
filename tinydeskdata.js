@@ -210,33 +210,37 @@
 					}
 				}
 
-				// --- 2. ATUALIZAÇÃO DOS METADADOS (SEM ALTERAR TIPOS) ---
+				// --- 2. ATUALIZAÇÃO DOS METADADOS (ESTRATÉGIA MINIMALISTA) ---
 				if (m.description || m.columns) {
 					try {
-						// Buscamos a tabela para pegar os tipos REAIS detectados pelo BigQuery
+						// Pegamos a tabela atualizada
 						let table = BigQuery.Tables.get(projectId, m.schema_name, m.name);
-						let needsUpdate = false;
+						
+						// Criamos um objeto novo apenas com o que queremos mudar
+						// Isso evita enviar campos de sistema ou tipos convertidos erroneamente
+						let patchResource = {};
 
 						if (m.description) {
-							table.description = m.description;
-							needsUpdate = true;
+							patchResource.description = m.description;
 						}
 
 						if (m.columns && Array.isArray(m.columns) && table.schema && table.schema.fields) {
-							table.schema.fields.forEach(field => {
+							patchResource.schema = { fields: table.schema.fields };
+							
+							patchResource.schema.fields.forEach(field => {
 								let colConfig = m.columns.find(c => c.name === field.name);
 								if (colConfig && colConfig.description) {
 									field.description = colConfig.description;
-									// IMPORTANTE: Não alteramos o field.type. 
-									// Mantemos o que o BQ detectou para evitar o erro de Schema Mismatch.
-									needsUpdate = true;
 								}
+								// Removemos propriedades de sistema que podem causar o mismatch no patch
+								delete field.precision;
+								delete field.scale;
 							});
 						}
 
-						if (needsUpdate) {
-							BigQuery.Tables.patch(table, projectId, m.schema_name, m.name);
-						}
+						// O Patch agora só leva a descrição e o schema "higienizado"
+						BigQuery.Tables.patch(patchResource, projectId, m.schema_name, m.name);
+						
 					} catch (err) {
 						console.warn('Falha ao aplicar descrições em ' + m.name + ': ' + err);
 					}
