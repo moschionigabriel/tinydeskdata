@@ -204,7 +204,6 @@
 					throw err;
 					}
 				}
-				console.log(`View ${m.name} atualizada com sucesso.`);
 
 				// --- CENÁRIO B: TABLE OU INSERT ---
 				} else {
@@ -238,7 +237,6 @@
 				while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') {
 					Utilities.sleep(2000);
 				}
-				console.log(`Tabela ${m.name} processada via Job (${disposition}).`);
 				}
 			});
 
