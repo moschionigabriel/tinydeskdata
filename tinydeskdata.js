@@ -81,7 +81,6 @@
 					}
 					SpreadsheetApp.flush();
 				} else if (obj.destination.config.file_type == 'xlsx' || obj.destination.config.file_type == 'csv') {
-                    // Lógica de CSV e XLSX simplificada para garantir funcionamento
                     if (obj.destination.config.file_type == 'csv') {
                         let csvContent = data.map(row => row.map(c => {
                             let s = String(c);
@@ -91,7 +90,6 @@
                         let folder = DriveApp.getFolderById(obj.destination.config.folder_id || DriveApp.getRootFolder().getId());
                         folder.createFile(fileName, '\ufeff' + csvContent, MimeType.CSV);
                     }
-                    // Adicione aqui a sua lógica específica de XLSX se necessário
                 }
 			} else if (obj.destination.where == 'sql_platform' && obj.destination.config.platform == 'bigquery') {
 				let bq_id = obj.destination.config.credentials.project_id;
@@ -155,7 +153,6 @@
 			obj.models.forEach(m => {
 				if (!m.raw_code) return;
 				let code = m.raw_code;
-				// Jinja Simple logic
 				const setRegex = /{%\s*set\s+(\w+)\s*=\s*\[([^\]]+)\]\s*%}/g;
 				const vars = {}; let mSet;
 				while ((mSet = setRegex.exec(code)) !== null) vars[mSet[1]] = mSet[2].split(',').map(i => i.trim().replace(/['"]/g, ''));
@@ -174,142 +171,126 @@
 			return obj;
 		}
 
-		function _modelExecute(obj) {
-			obj.models.forEach(m => {
-				let projectId = obj.config.credentials.project_id;
-				let materialized = m.materialized ? m.materialized.toLowerCase() : 'table';
-				
-				// --- 1. CRIAÇÃO DA VIEW OU TABELA ---
-				if (materialized === 'view') {
-					let tableResource = {
-						tableReference: { projectId: projectId, datasetId: m.schema_name, tableId: m.name },
-						view: { query: m.compiled_code, useLegacySql: false }
-					};
-					try { BigQuery.Tables.remove(projectId, m.schema_name, m.name); } catch (e) {}
-					BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
-				} else {
-					let isInsertMode = (materialized === 'insert');
-					let disposition = (isInsertMode || m.write_disposition === 'append') ? 'WRITE_APPEND' : 'WRITE_TRUNCATE';
-					let jobResource = {
-						configuration: {
-							query: {
-								query: m.compiled_code,
-								useLegacySql: false,
-								destinationTable: { projectId: projectId, datasetId: m.schema_name, tableId: m.name },
-								writeDisposition: disposition,
-								createDisposition: 'CREATE_IF_NEEDED'
-							}
-						}
-					};
-					if (m.partition_column) {
-						jobResource.configuration.query.timePartitioning = { type: 'DAY', field: m.partition_column };
-					}
-					let job = BigQuery.Jobs.insert(jobResource, projectId);
-					while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') {
-						Utilities.sleep(2000);
-					}
-				}
+		// --- MÉTODOS DE TESTE E EXECUÇÃO ---
 
-				// --- 2. ATUALIZAÇÃO DOS METADADOS (ESTRATÉGIA MINIMALISTA) ---
-				if (m.description || m.columns) {
-					try {
-						// Pegamos a tabela atualizada
-						let table = BigQuery.Tables.get(projectId, m.schema_name, m.name);
-						
-						// Criamos um objeto novo apenas com o que queremos mudar
-						// Isso evita enviar campos de sistema ou tipos convertidos erroneamente
-						let patchResource = {};
-
-						if (m.description) {
-							patchResource.description = m.description;
-						}
-
-						if (m.columns && Array.isArray(m.columns) && table.schema && table.schema.fields) {
-							patchResource.schema = { fields: table.schema.fields };
-							
-							patchResource.schema.fields.forEach(field => {
-								let colConfig = m.columns.find(c => c.name === field.name);
-								if (colConfig && colConfig.description) {
-									field.description = colConfig.description;
-								}
-								// Removemos propriedades de sistema que podem causar o mismatch no patch
-								delete field.precision;
-								delete field.scale;
-							});
-						}
-
-						// O Patch agora só leva a descrição e o schema "higienizado"
-						BigQuery.Tables.patch(patchResource, projectId, m.schema_name, m.name);
-						
-					} catch (err) {
-						console.warn('Falha ao aplicar descrições em ' + m.name + ': ' + err);
-					}
-				}
-			});
-			return obj;
-		}
-
-		function _modelTest(obj) {
+		function _modelRunTests(obj, m, tempTableName) {
+			if (!m.columns) return true;
 			let projectId = obj.config.credentials.project_id;
-			let results = [];
+			let allTestsPass = true;
 
-			obj.models.forEach(m => {
-				if (!m.columns) return;
+			m.columns.forEach(col => {
+				if (!col.tests) return;
+				col.tests.forEach(test => {
+					let testName = typeof test === 'string' ? test : Object.keys(test)[0];
+					let tableRef = `\`${projectId}.${m.schema_name}.${tempTableName}\``;
+					let query = "";
 
-				m.columns.forEach(col => {
-					if (!col.tests) return;
+					if (testName === 'unique') query = `SELECT ${col.name} FROM ${tableRef} GROUP BY 1 HAVING COUNT(*) > 1 LIMIT 1`;
+					else if (testName === 'not null') query = `SELECT ${col.name} FROM ${tableRef} WHERE ${col.name} IS NULL LIMIT 1`;
+					else if (testName === 'accepted_values') {
+						let values = test.accepted_values.values.map(v => `'${v}'`).join(',');
+						query = `SELECT ${col.name} FROM ${tableRef} WHERE ${col.name} NOT IN (${values}) LIMIT 1`;
+					}
+					else if (testName === 'relationships') {
+						let toRef = test.relationships[0].to.match(/['"]([^'"]+)['"]/)[1];
+						let toField = test.relationships[1].field;
+						let targetModel = obj.models.find(mod => mod.name === toRef);
+						let targetTable = `\`${projectId}.${targetModel.schema_name}.${targetModel.name}\``;
+						query = `SELECT a.${col.name} FROM ${tableRef} a LEFT JOIN ${targetTable} b ON a.${col.name} = b.${toField} WHERE b.${toField} IS NULL AND a.${col.name} IS NOT NULL LIMIT 1`;
+					}
 
-					col.tests.forEach(test => {
-						let testName = typeof test === 'string' ? test : Object.keys(test)[0];
-						let query = "";
-						let tableRef = `\`${projectId}.${m.schema_name}.${m.name}\``;
-
-						// --- Lógica de Geração de Queries de Teste ---
-						if (testName === 'unique') {
-							query = `SELECT ${col.name}, COUNT(*) as count FROM ${tableRef} GROUP BY 1 HAVING count > 1`;
-						} 
-						else if (testName === 'not null') {
-							query = `SELECT * FROM ${tableRef} WHERE ${col.name} IS NULL`;
-						} 
-						else if (testName === 'accepted_values') {
-							let values = test.accepted_values.values.map(v => `'${v}'`).join(',');
-							query = `SELECT ${col.name} FROM ${tableRef} WHERE ${col.name} NOT IN (${values})`;
-						} 
-						else if (testName === 'relationships') {
-							// Resolve o ref("modelo") para o nome real da tabela
-							let toRef = test.relationships[0].to.match(/['"]([^'"]+)['"]/)[1];
-							let toField = test.relationships[1].field;
-							let targetModel = obj.models.find(mod => mod.name === toRef);
-							let targetTable = `\`${projectId}.${targetModel.schema_name}.${targetModel.name}\``;
-							
-							query = `SELECT a.${col.name} FROM ${tableRef} a LEFT JOIN ${targetTable} b ON a.${col.name} = b.${toField} WHERE b.${toField} IS NULL AND a.${col.name} IS NOT NULL`;
+					if (query) {
+						let testRes = BigQuery.Jobs.query({ query: query, useLegacySql: false }, projectId);
+						if (parseInt(testRes.totalRows) > 0) {
+							console.error(`[FAIL] Teste '${testName}' falhou em ${m.name}.${col.name}`);
+							allTestsPass = false;
+						} else {
+							console.log(`[PASS] Teste '${testName}' em ${m.name}.${col.name}`);
 						}
-
-						if (query) {
-							try {
-								let testRes = BigQuery.Jobs.query({ query: query, useLegacySql: false }, projectId);
-								let failCount = parseInt(testRes.totalRows);
-								
-								let status = failCount === 0 ? 'PASS' : 'FAIL';
-								console.log(`[TEST ${status}] ${m.name}.${col.name} (${testName}) - Fails: ${failCount}`);
-								
-								results.push({
-									model: m.name,
-									column: col.name,
-									test: testName,
-									status: status,
-									fail_count: failCount
-								});
-							} catch (err) {
-								console.error(`Erro ao executar teste ${testName} em ${m.name}: ${err}`);
-							}
-						}
-					});
+					}
 				});
 			});
-			obj.test_results = results;
+			return allTestsPass;
+		}
+
+		function _modelExecute(obj) {
+			let projectId = obj.config.credentials.project_id;
+			obj.models.forEach(m => {
+				let materialized = (m.materialized || 'table').toLowerCase();
+				let tempTableName = m.name + "__tmp";
+
+				// 1. Criar Tabela Temporária de Staging
+				let jobResource = {
+					configuration: {
+						query: {
+							query: m.compiled_code,
+							useLegacySql: false,
+							destinationTable: { projectId: projectId, datasetId: m.schema_name, tableId: tempTableName },
+							writeDisposition: 'WRITE_TRUNCATE',
+							createDisposition: 'CREATE_IF_NEEDED'
+						}
+					}
+				};
+				let job = BigQuery.Jobs.insert(jobResource, projectId);
+				while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(1000);
+
+				// 2. Rodar Testes na Temporária
+				if (_modelRunTests(obj, m, tempTableName)) {
+					// 3. Se passou, promover para Produção
+					if (materialized === 'view') {
+						let tableResource = {
+							tableReference: { projectId: projectId, datasetId: m.schema_name, tableId: m.name },
+							view: { query: m.compiled_code, useLegacySql: false }
+						};
+						try { BigQuery.Tables.remove(projectId, m.schema_name, m.name); } catch (e) {}
+						BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
+					} else {
+						let isAppend = (materialized === 'insert' || m.write_disposition === 'append');
+						let copyJob = {
+							configuration: {
+								query: {
+									query: `SELECT * FROM \`${projectId}.${m.schema_name}.${tempTableName}\``,
+									destinationTable: { projectId: projectId, datasetId: m.schema_name, tableId: m.name },
+									writeDisposition: isAppend ? 'WRITE_APPEND' : 'WRITE_TRUNCATE',
+									useLegacySql: false
+								}
+							}
+						};
+						if (m.partition_column) copyJob.configuration.query.timePartitioning = { type: 'DAY', field: m.partition_column };
+						let res = BigQuery.Jobs.insert(copyJob, projectId);
+						while (BigQuery.Jobs.get(projectId, res.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(1000);
+					}
+					
+					// 4. Metadados e Limpeza
+					_applyMetadata(projectId, m);
+					BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
+				} else {
+					BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
+					throw new Error(`[ABORTED] Model ${m.name} interrompido por falha nos testes.`);
+				}
+			});
 			return obj;
 		}
+
+		function _applyMetadata(projectId, m) {
+			if (!m.description && !m.columns) return;
+			try {
+				let table = BigQuery.Tables.get(projectId, m.schema_name, m.name);
+				let patchResource = {};
+				if (m.description) patchResource.description = m.description;
+				if (m.columns && table.schema && table.schema.fields) {
+					patchResource.schema = { fields: table.schema.fields };
+					patchResource.schema.fields.forEach(field => {
+						let colConfig = m.columns.find(c => c.name === field.name);
+						if (colConfig && colConfig.description) field.description = colConfig.description;
+						delete field.precision; delete field.scale;
+					});
+				}
+				BigQuery.Tables.patch(patchResource, projectId, m.schema_name, m.name);
+			} catch (err) { console.warn('Erro metadados ' + m.name + ': ' + err); }
+		}
+
+		// --- ORQUESTRAÇÃO ---
 
 		function _orchestrateCreateLog(obj) {
 			obj.log = { 
@@ -346,7 +327,7 @@
 			return obj;
 		}
 
-		// --- API PÚBLICA (Único que aparece no console.log) ---
+		// --- API PÚBLICA ---
 
 		const api = {
 			move: function(obj) { return _moveLoadData(obj, _moveGetData(obj)); },
@@ -356,15 +337,14 @@
 					_modelSetDependencies,
 					(o) => { o.models = _topologicalSort(o.models, "name", "depends_on"); return o; },
 					_modelCompile,
-					_modelExecute,
-					_modelTest // <--- Inserido aqui
+					_modelExecute
 				);
 			},
 			orchestrate: function(obj) {
 				return _pipeline(obj,
 					_orchestrateCreateLog,
 					(o) => { o.log.nodes = _topologicalSort(o.log.nodes, "name", "depends_on"); return o; },
-					(o) => _orchestrateExecute(o, api), // Passa a própria API para o executor
+					(o) => _orchestrateExecute(o, api),
 					_orchestrateEndLog
 				);
 			}
