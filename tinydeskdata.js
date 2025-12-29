@@ -179,29 +179,16 @@
 				let projectId = obj.config.credentials.project_id;
 				let materialized = m.materialized ? m.materialized.toLowerCase() : 'table';
 				
-				// --- CENÁRIO A: VIEW ---
+				// --- 1. CRIAÇÃO INICIAL (Sem Schema para evitar o erro) ---
 				if (materialized === 'view') {
 					let tableResource = {
 						tableReference: { projectId: projectId, datasetId: m.schema_name, tableId: m.name },
-						view: { query: m.compiled_code, useLegacySql: false },
-						description: m.description || ""
+						view: { query: m.compiled_code, useLegacySql: false }
 					};
-
-					// Se houver colunas definidas, montamos o schema forçando STRING (exceto partição)
-					if (m.columns && Array.isArray(m.columns)) {
-						tableResource.schema = {
-							fields: m.columns.map(col => ({
-								name: col.name,
-								type: (col.name === m.partition_column ? 'DATE' : 'STRING'),
-								description: col.description || ""
-							}))
-						};
-					}
 
 					try { BigQuery.Tables.remove(projectId, m.schema_name, m.name); } catch (e) {}
 					BigQuery.Tables.insert(tableResource, projectId, m.schema_name);
 
-				// --- CENÁRIO B: TABLE OU INSERT ---
 				} else {
 					let isInsertMode = (materialized === 'insert');
 					let disposition = (isInsertMode || m.write_disposition === 'append') ? 'WRITE_APPEND' : 'WRITE_TRUNCATE';
@@ -226,27 +213,37 @@
 					while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') {
 						Utilities.sleep(2000);
 					}
+				}
 
-					// --- ATUALIZAÇÃO DE METADADOS PARA TABELAS ---
-					if (m.description || m.columns) {
-						try {
-							// Para tabelas físicas, o patch é o caminho mais seguro
-							let tableMeta = {};
-							if (m.description) tableMeta.description = m.description;
-							
-							if (m.columns && Array.isArray(m.columns)) {
-								tableMeta.schema = {
-									fields: m.columns.map(col => ({
-										name: col.name,
-										type: (col.name === m.partition_column ? 'DATE' : 'STRING'),
-										description: col.description || ""
-									}))
-								};
-							}
-							BigQuery.Tables.patch(tableMeta, projectId, m.schema_name, m.name);
-						} catch (err) {
-							console.warn('Erro ao aplicar metadados em ' + m.name + ': ' + err);
+				// --- 2. ATUALIZAÇÃO DOS METADADOS (PATCH) ---
+				if (m.description || m.columns) {
+					try {
+						// Para injetar descrições, precisamos primeiro ler o esquema que o BQ gerou automaticamente
+						let table = BigQuery.Tables.get(projectId, m.schema_name, m.name);
+						let needsUpdate = false;
+
+						if (m.description) {
+							table.description = m.description;
+							needsUpdate = true;
 						}
+
+						if (m.columns && Array.isArray(m.columns) && table.schema && table.schema.fields) {
+							table.schema.fields.forEach(field => {
+								let colConfig = m.columns.find(c => c.name === field.name);
+								if (colConfig && colConfig.description) {
+									field.description = colConfig.description;
+									// Como você quer forçar STRING (exceto partição), garantimos aqui:
+									field.type = (field.name === m.partition_column ? 'DATE' : 'STRING');
+									needsUpdate = true;
+								}
+							});
+						}
+
+						if (needsUpdate) {
+							BigQuery.Tables.patch(table, projectId, m.schema_name, m.name);
+						}
+					} catch (err) {
+						console.warn('Aviso: Falha ao aplicar descrições em ' + m.name + ': ' + err);
 					}
 				}
 			});
