@@ -215,16 +215,31 @@
 
 				let jobResource = {
 					configuration: { query: {
-						query: m.compiled_code, useLegacySql: false,
+						query: m.compiled_code, 
+						useLegacySql: false,
 						destinationTable: { projectId: projectId, datasetId: m.schema_name, tableId: tempTableName },
-						writeDisposition: 'WRITE_TRUNCATE', createDisposition: 'CREATE_IF_NEEDED'
+						writeDisposition: 'WRITE_TRUNCATE', 
+						createDisposition: 'CREATE_IF_NEEDED'
 					}}
 				};
-				let job = BigQuery.Jobs.insert(jobResource, projectId);
-				while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') {Utilities.sleep(1000)};
-				Utilities.sleep(3000);
 
-				// Executa testes e anexa resultado ao modelo
+				// Inicia o Job
+				let job = BigQuery.Jobs.insert(jobResource, projectId);
+				let status;
+
+				// Aguarda e captura o status final
+				while (true) {
+					status = BigQuery.Jobs.get(projectId, job.jobReference.jobId).status;
+					if (status.state === 'DONE') break;
+					Utilities.sleep(1000);
+				}
+
+				// --- VERIFICAÇÃO CRÍTICA DE ERRO ---
+				if (status.errorResult) {
+					throw new Error(`[ERRO NO MODELO: ${m.name}] ${status.errorResult.message}`);
+				}
+
+				// Se chegou aqui, a tabela temporária REALMENTE existe.
 				let testResults = _modelRunTests(obj, m, tempTableName);
 				m.test_results = testResults.details; 
 
@@ -242,6 +257,8 @@
 						}}};
 						if (m.partition_column) copyJob.configuration.query.timePartitioning = { type: 'DAY', field: m.partition_column };
 						let res = BigQuery.Jobs.insert(copyJob, projectId);
+						
+						// Espera o copy job também e checa erro
 						while (BigQuery.Jobs.get(projectId, res.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(1000);
 					}
 					_applyMetadata(projectId, m);
