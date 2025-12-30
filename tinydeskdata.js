@@ -163,7 +163,7 @@
 				}
 				const map = {}; obj.models.forEach(n => map[n.name] = `${obj.config.credentials.project_id}.${n.schema_name}.${n.name}`);
 				m.compiled_code = code.replace(/\{\{\s*ref\((['"])(.*?)\1\)\s*\}\}/g, (match, q, name) => map[name] || match);
-				console.log("DEBUG SQL Gerado para " + m.name + ": " + m.compiled_code);
+				//console.log("DEBUG SQL Gerado para " + m.name + ": " + m.compiled_code);
 			});
 			return obj;
 		}
@@ -308,7 +308,7 @@
 
 		function _orchestrateExecute(obj, pubApi) {
 			obj.log.nodes.forEach(node => {
-				console.log('starting node: ' + node.name);
+				console.log('running node: ' + node.name);
 				node.start = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
 				
 				let runner = (node.type == 'move') ? pubApi.move : pubApi.model;
