@@ -281,7 +281,8 @@
 			};
 			obj.log.nodes.forEach(n => {
 				let check = Array.isArray(n.info) ? n.info[0] : n.info;
-				n.type = check.source ? 'move' : 'model';
+				// Verifica se 'check' existe e se possui 'source'. Caso contrário, assume 'model'.
+				n.type = (check && check.source) ? 'move' : 'model'; 
 			});
 			return obj;
 		}
