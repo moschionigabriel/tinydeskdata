@@ -318,13 +318,7 @@
 		const api = {
 			move: function(obj) { return _moveLoadData(obj, _moveGetData(obj)); },
 			model: function(obj) {
-			if (!obj) {
-				throw new Error("O executor 'model' recebeu um objeto undefined. Verifique a configuração do seu orchestrate.");
-			}
-			return _pipeline(obj, _modelGetRawCode, _modelSetDependencies, (o) => { 
-				o.models = _topologicalSort(o.models, "name", "depends_on"); 
-				return o; 
-			}, _modelCompile, _modelExecute);
+				return _pipeline(obj, _modelGetRawCode, _modelSetDependencies, (o) => { o.models = _topologicalSort(o.models, "name", "depends_on"); return o; }, _modelCompile, _modelExecute);
 			},
 			orchestrate: function(obj) {
 				return _pipeline(obj, _orchestrateCreateLog, (o) => { o.log.nodes = _topologicalSort(o.log.nodes, "name", "depends_on"); return o; }, (o) => _orchestrateExecute(o, api), _orchestrateEndLog);
