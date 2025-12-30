@@ -221,7 +221,8 @@
 					}}
 				};
 				let job = BigQuery.Jobs.insert(jobResource, projectId);
-				while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(1000);
+				while (BigQuery.Jobs.get(projectId, job.jobReference.jobId).status.state !== 'DONE') {Utilities.sleep(1000)};
+				Utilities.sleep(3000);
 
 				// Executa testes e anexa resultado ao modelo
 				let testResults = _modelRunTests(obj, m, tempTableName);
