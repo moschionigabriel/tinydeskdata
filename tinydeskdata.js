@@ -132,7 +132,7 @@
 
 		function _modelGetRawCode(obj) {
 			let folder = obj.parent_folder ? obj.parent_folder + '/' : '';
-			obj.models.forEach(m => m.raw_code = HtmlService.createHtmlOutputFromFile(folder + m.name + '.sql.html').getContent().toString().replace(/\n/g, ''));
+			obj.models.forEach(m => m.raw_code = HtmlService.createHtmlOutputFromFile(folder + m.name + '.sql.html').getRawContent().replace(/\n/g, ' '));
 			return obj;
 		}
 
