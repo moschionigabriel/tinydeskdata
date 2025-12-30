@@ -163,6 +163,7 @@
 				}
 				const map = {}; obj.models.forEach(n => map[n.name] = `${obj.config.credentials.project_id}.${n.schema_name}.${n.name}`);
 				m.compiled_code = code.replace(/\{\{\s*ref\((['"])(.*?)\1\)\s*\}\}/g, (match, q, name) => map[name] || match);
+				console.log("DEBUG SQL Gerado para " + m.name + ": " + m.compiled_code);
 			});
 			return obj;
 		}
