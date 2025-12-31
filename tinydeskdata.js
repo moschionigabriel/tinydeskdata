@@ -146,27 +146,63 @@
 		}
 
 		function _modelCompile(obj) {
-			obj.models.forEach(m => {
-				if (!m.raw_code) return;
-				let code = m.raw_code;
-				const setRegex = /{%\s*set\s+(\w+)\s*=\s*\[([^\]]+)\]\s*%}/g;
-				const vars = {}; let mSet;
-				while ((mSet = setRegex.exec(code)) !== null) vars[mSet[1]] = mSet[2].split(',').map(i => i.trim().replace(/['"]/g, ''));
-				code = code.replace(setRegex, '');
-				const forRegex = /{%\s*for\s+(\w+)\s+in\s+(\w+)\s*-%}([\s\S]*?){%\s*endfor\s*-%}/g;
-				let mFor;
-				while ((mFor = forRegex.exec(code)) !== null) {
-					if (vars[mFor[2]]) {
-						let exp = vars[mFor[2]].map(item => mFor[3].replace(new RegExp(`{{\\s*${mFor[1]}\\s*}}`, 'g'), item)).join('\n');
-						code = code.replace(mFor[0], exp);
-					}
-				}
-				const map = {}; obj.models.forEach(n => map[n.name] = `${obj.config.credentials.project_id}.${n.schema_name}.${n.name}`);
-				m.compiled_code = code.replace(/\{\{\s*ref\((['"])(.*?)\1\)\s*\}\}/g, (match, q, name) => map[name] || match);
-				//console.log("DEBUG SQL Gerado para " + m.name + ": " + m.compiled_code);
-			});
-			return obj;
-		}
+      obj.models.forEach(m => {
+        if (!m.raw_code) return;
+        let code = m.raw_code;
+        
+        // 1. Processa {% set ... %}
+        const setRegex = /{%\s*set\s+(\w+)\s*=\s*\[([^\]]+)\]\s*%}/g;
+        const vars = {}; let mSet;
+        while ((mSet = setRegex.exec(code)) !== null) {
+          vars[mSet[1]] = mSet[2].split(',').map(i => i.trim().replace(/['"]/g, ''));
+        }
+        code = code.replace(setRegex, '');
+        
+        // 2. Determina is_incremental
+        let projectId = obj.config.credentials.project_id;
+        let tableExists = false;
+        let materialized = (m.materialized || 'table').toLowerCase();
+        
+        if (materialized === 'incremental') {
+          try {
+            BigQuery.Tables.get(projectId, m.schema_name, m.name);
+            tableExists = true;
+          } catch (e) { tableExists = false; }
+        }
+
+        const isIncrementalVal = tableExists;
+
+        // 3. NOVO: Processa blocos {% if is_incremental() %} ... {% endif %}
+        // Esta regex captura o bloco todo e o conteúdo interno
+        const ifIncrementalRegex = /{%\s*if\s+is_incremental\(\s*\)\s*%}([\s\S]*?){%\s*endif\s*%}/g;
+        code = code.replace(ifIncrementalRegex, (match, content) => {
+          return isIncrementalVal ? content : '';
+        });
+
+        // 4. Processa {% for ... %}
+        const forRegex = /{%\s*for\s+(\w+)\s+in\s+(\w+)\s*-%}([\s\S]*?){%\s*endfor\s*-%}/g;
+        let mFor;
+        while ((mFor = forRegex.exec(code)) !== null) {
+          if (vars[mFor[2]]) {
+            let exp = vars[mFor[2]].map(item => mFor[3].replace(new RegExp(`{{\\s*${mFor[1]}\\s*}}`, 'g'), item)).join('\n');
+            code = code.replace(mFor[0], exp);
+          }
+        }
+        
+        // 5. Substitui variáveis simples remanescentes {{ is_incremental() }}
+        code = code.replace(/{{\s*is_incremental\(\s*\)\s*}}/g, isIncrementalVal ? 'true' : 'false');
+        
+        // 6. Substitui {{ ref(...) }}
+        const map = {}; 
+        obj.models.forEach(n => map[n.name] = `${projectId}.${n.schema_name}.${n.name}`);
+        code = code.replace(/\{\{\s*ref\((['"])(.*?)\1\)\s*\}\}/g, (match, q, name) => map[name] || match);
+        
+        m.compiled_code = code;
+        m._table_exists = tableExists;
+        //console.log("DEBUG SQL Gerado para " + m.name + ": " + m.compiled_code);
+      });
+      return obj;
+    }
 
 		function _modelRunTests(obj, m, tempTableName) {
 			let testResults = { pass: true, details: [] };
@@ -210,10 +246,12 @@
 
 		function _modelExecute(obj) {
 			let projectId = obj.config.credentials.project_id;
+			
 			obj.models.forEach(m => {
 				let materialized = (m.materialized || 'table').toLowerCase();
 				let tempTableName = m.name + "__tmp";
 
+				// Executa query na tabela temporária
 				let jobResource = {
 					configuration: { query: {
 						query: m.compiled_code, 
@@ -224,53 +262,153 @@
 					}}
 				};
 
-				// Inicia o Job
 				let job = BigQuery.Jobs.insert(jobResource, projectId);
 				let status;
 
-				// Aguarda e captura o status final
 				while (true) {
 					status = BigQuery.Jobs.get(projectId, job.jobReference.jobId).status;
 					if (status.state === 'DONE') break;
 					Utilities.sleep(1000);
 				}
 
-				// --- VERIFICAÇÃO CRÍTICA DE ERRO ---
 				if (status.errorResult) {
 					throw new Error(`[ERRO NO MODELO: ${m.name}] ${status.errorResult.message}`);
 				}
 
-				// Se chegou aqui, a tabela temporária REALMENTE existe.
+				// Roda testes
 				let testResults = _modelRunTests(obj, m, tempTableName);
 				m.test_results = testResults.details; 
 
-				if (testResults.pass) {
-					if (materialized === 'view') {
-						let viewRes = { tableReference: { projectId, datasetId: m.schema_name, tableId: m.name }, view: { query: m.compiled_code, useLegacySql: false } };
-						try { BigQuery.Tables.remove(projectId, m.schema_name, m.name); } catch(e){}
-						BigQuery.Tables.insert(viewRes, projectId, m.schema_name);
-					} else {
-						let isAppend = (materialized === 'insert' || m.write_disposition === 'append');
-						let copyJob = { configuration: { query: {
-							query: `SELECT * FROM \`${projectId}.${m.schema_name}.${tempTableName}\``,
-							destinationTable: { projectId, datasetId: m.schema_name, tableId: m.name },
-							writeDisposition: isAppend ? 'WRITE_APPEND' : 'WRITE_TRUNCATE', useLegacySql: false
-						}}};
-						if (m.partition_column) copyJob.configuration.query.timePartitioning = { type: 'DAY', field: m.partition_column };
-						let res = BigQuery.Jobs.insert(copyJob, projectId);
-						
-						// Espera o copy job também e checa erro
-						while (BigQuery.Jobs.get(projectId, res.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(1000);
-					}
-					_applyMetadata(projectId, m);
-					BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
-					console.log(`[OK] ${m.name} tests ok.`);
-				} else {
+				if (!testResults.pass) {
 					BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
 					throw new Error(`[CRITICAL] tests failed in ${m.name}. pipeline aborted.`);
 				}
+
+				// Materializa conforme estratégia
+				if (materialized === 'view') {
+					let viewRes = { tableReference: { projectId, datasetId: m.schema_name, tableId: m.name }, view: { query: m.compiled_code, useLegacySql: false } };
+					try { BigQuery.Tables.remove(projectId, m.schema_name, m.name); } catch(e){}
+					BigQuery.Tables.insert(viewRes, projectId, m.schema_name);
+				} 
+				else if (materialized === 'incremental') {
+					_executeIncremental(obj, m, tempTableName, projectId);
+				}
+				else {
+					// table ou insert (legado)
+					let isAppend = (materialized === 'insert' || m.write_disposition === 'append');
+					let copyJob = { configuration: { query: {
+						query: `SELECT * FROM \`${projectId}.${m.schema_name}.${tempTableName}\``,
+						destinationTable: { projectId, datasetId: m.schema_name, tableId: m.name },
+						writeDisposition: isAppend ? 'WRITE_APPEND' : 'WRITE_TRUNCATE', 
+						useLegacySql: false
+					}}};
+					if (m.partition_column) copyJob.configuration.query.timePartitioning = { type: 'DAY', field: m.partition_column };
+					let res = BigQuery.Jobs.insert(copyJob, projectId);
+					
+					while (BigQuery.Jobs.get(projectId, res.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(1000);
+				}
+
+				_applyMetadata(projectId, m);
+				BigQuery.Tables.remove(projectId, m.schema_name, tempTableName);
+				console.log(`[OK] ${m.name} processed successfully.`);
 			});
 			return obj;
+		}
+
+		function _executeIncremental(obj, m, tempTableName, projectId) {
+			let strategy = m.incremental_strategy || 'append';
+			let tableExists = m._table_exists;
+
+			if (!tableExists) {
+				// Primeira execução: cria tabela
+				let createJob = { configuration: { query: {
+					query: `SELECT * FROM \`${projectId}.${m.schema_name}.${tempTableName}\``,
+					destinationTable: { projectId, datasetId: m.schema_name, tableId: m.name },
+					writeDisposition: 'WRITE_TRUNCATE',
+					useLegacySql: false
+				}}};
+				if (m.partition_column) createJob.configuration.query.timePartitioning = { type: 'DAY', field: m.partition_column };
+				let res = BigQuery.Jobs.insert(createJob, projectId);
+				while (BigQuery.Jobs.get(projectId, res.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(1000);
+				console.log(`[INCREMENTAL] ${m.name} - primeira execução (full refresh)`);
+				return;
+			}
+
+			// Execuções subsequentes
+			if (strategy === 'append') {
+				let appendJob = { configuration: { query: {
+					query: `SELECT * FROM \`${projectId}.${m.schema_name}.${tempTableName}\``,
+					destinationTable: { projectId, datasetId: m.schema_name, tableId: m.name },
+					writeDisposition: 'WRITE_APPEND',
+					useLegacySql: false
+				}}};
+				let res = BigQuery.Jobs.insert(appendJob, projectId);
+				while (BigQuery.Jobs.get(projectId, res.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(1000);
+				console.log(`[INCREMENTAL] ${m.name} - append strategy`);
+			}
+			else if (strategy === 'merge' || strategy === 'delete+insert') {
+				if (!m.unique_key) throw new Error(`[ERRO] ${m.name}: estratégia '${strategy}' requer 'unique_key'`);
+				
+				let uniqueKeys = Array.isArray(m.unique_key) ? m.unique_key : [m.unique_key];
+				let targetTable = `\`${projectId}.${m.schema_name}.${m.name}\``;
+				let sourceTable = `\`${projectId}.${m.schema_name}.${tempTableName}\``;
+				
+				if (strategy === 'delete+insert') {
+					// Delete + Insert
+					let deleteConditions = uniqueKeys.map(k => `target.${k} = source.${k}`).join(' AND ');
+					let deleteQuery = `
+						DELETE FROM ${targetTable} AS target
+						WHERE EXISTS (
+							SELECT 1 FROM ${sourceTable} AS source
+							WHERE ${deleteConditions}
+						)
+					`;
+					let delJob = BigQuery.Jobs.query({ query: deleteQuery, useLegacySql: false }, projectId);
+					while (!delJob.jobComplete) { 
+						Utilities.sleep(500); 
+						delJob = BigQuery.Jobs.getQueryResults(projectId, delJob.jobReference.jobId); 
+					}
+					
+					let insertJob = { configuration: { query: {
+						query: `SELECT * FROM ${sourceTable}`,
+						destinationTable: { projectId, datasetId: m.schema_name, tableId: m.name },
+						writeDisposition: 'WRITE_APPEND',
+						useLegacySql: false
+					}}};
+					let res = BigQuery.Jobs.insert(insertJob, projectId);
+					while (BigQuery.Jobs.get(projectId, res.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(1000);
+					console.log(`[INCREMENTAL] ${m.name} - delete+insert strategy`);
+				}
+				else {
+					// Merge
+					let matchCondition = uniqueKeys.map(k => `target.${k} = source.${k}`).join(' AND ');
+					
+					// Pega colunas da temp table
+					let tempTableInfo = BigQuery.Tables.get(projectId, m.schema_name, tempTableName);
+					let columns = tempTableInfo.schema.fields.map(f => f.name);
+					let updateSet = columns.map(c => `target.${c} = source.${c}`).join(', ');
+					let insertCols = columns.join(', ');
+					let insertVals = columns.map(c => `source.${c}`).join(', ');
+					
+					let mergeQuery = `
+						MERGE ${targetTable} AS target
+						USING ${sourceTable} AS source
+						ON ${matchCondition}
+						WHEN MATCHED THEN
+							UPDATE SET ${updateSet}
+						WHEN NOT MATCHED THEN
+							INSERT (${insertCols})
+							VALUES (${insertVals})
+					`;
+					
+					let mergeJob = BigQuery.Jobs.query({ query: mergeQuery, useLegacySql: false }, projectId);
+					while (!mergeJob.jobComplete) { 
+						Utilities.sleep(500); 
+						mergeJob = BigQuery.Jobs.getQueryResults(projectId, mergeJob.jobReference.jobId); 
+					}
+					console.log(`[INCREMENTAL] ${m.name} - merge strategy`);
+				}
+			}
 		}
 
 		function _applyMetadata(projectId, m) {
@@ -300,7 +438,6 @@
 			};
 			obj.log.nodes.forEach(n => {
 				let check = Array.isArray(n.info) ? n.info[0] : n.info;
-				// Verifica se 'check' existe e se possui 'source'. Caso contrário, assume 'model'.
 				n.type = (check && check.source) ? 'move' : 'model'; 
 			});
 			return obj;
@@ -337,13 +474,13 @@
 		const api = {
 			move: function(obj) { return _moveLoadData(obj, _moveGetData(obj)); },
 			model: function(obj) {
-			if (!obj) {
-				throw new Error("O executor 'model' recebeu um objeto undefined. Verifique a configuração do seu orchestrate.");
-			}
-			return _pipeline(obj, _modelGetRawCode, _modelSetDependencies, (o) => { 
-				o.models = _topologicalSort(o.models, "name", "depends_on"); 
-				return o; 
-			}, _modelCompile, _modelExecute);
+				if (!obj) {
+					throw new Error("O executor 'model' recebeu um objeto undefined. Verifique a configuração do seu orchestrate.");
+				}
+				return _pipeline(obj, _modelGetRawCode, _modelSetDependencies, (o) => { 
+					o.models = _topologicalSort(o.models, "name", "depends_on"); 
+					return o; 
+				}, _modelCompile, _modelExecute);
 			},
 			orchestrate: function(obj) {
 				return _pipeline(obj, _orchestrateCreateLog, (o) => { o.log.nodes = _topologicalSort(o.log.nodes, "name", "depends_on"); return o; }, (o) => _orchestrateExecute(o, api), _orchestrateEndLog);
@@ -356,3 +493,7 @@
 	this.tinyDeskData = tinyDeskData;
 	return tinyDeskData;
 }).call(this);
+
+let src = () => {
+  tinyDeskData.orchestrate(orchestra)
+}
