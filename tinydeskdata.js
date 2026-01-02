@@ -146,63 +146,55 @@
 		}
 
 		function _modelCompile(obj) {
-      obj.models.forEach(m => {
-        if (!m.raw_code) return;
-        let code = m.raw_code;
-        
-        // 1. Processa {% set ... %}
-        const setRegex = /{%\s*set\s+(\w+)\s*=\s*\[([^\]]+)\]\s*%}/g;
-        const vars = {}; let mSet;
-        while ((mSet = setRegex.exec(code)) !== null) {
-          vars[mSet[1]] = mSet[2].split(',').map(i => i.trim().replace(/['"]/g, ''));
-        }
-        code = code.replace(setRegex, '');
-        
-        // 2. Determina is_incremental
-        let projectId = obj.config.credentials.project_id;
-        let tableExists = false;
-        let materialized = (m.materialized || 'table').toLowerCase();
-        
-        if (materialized === 'incremental') {
-          try {
-            BigQuery.Tables.get(projectId, m.schema_name, m.name);
-            tableExists = true;
-          } catch (e) { tableExists = false; }
-        }
+			obj.models.forEach(m => {
+				if (!m.raw_code) return;
+				let code = m.raw_code;
+				
+				const setRegex = /{%\s*set\s+(\w+)\s*=\s*\[([^\]]+)\]\s*%}/g;
+				const vars = {}; let mSet;
+				while ((mSet = setRegex.exec(code)) !== null) {
+				vars[mSet[1]] = mSet[2].split(',').map(i => i.trim().replace(/['"]/g, ''));
+				}
+				code = code.replace(setRegex, '');
+				
+				let projectId = obj.config.credentials.project_id;
+				let tableExists = false;
+				let materialized = (m.materialized || 'table').toLowerCase();
+				
+				if (materialized === 'incremental') {
+				try {
+					BigQuery.Tables.get(projectId, m.schema_name, m.name);
+					tableExists = true;
+				} catch (e) { tableExists = false; }
+				}
 
-        const isIncrementalVal = tableExists;
+				const isIncrementalVal = tableExists;
 
-        // 3. NOVO: Processa blocos {% if is_incremental() %} ... {% endif %}
-        // Esta regex captura o bloco todo e o conteúdo interno
-        const ifIncrementalRegex = /{%\s*if\s+is_incremental\(\s*\)\s*%}([\s\S]*?){%\s*endif\s*%}/g;
-        code = code.replace(ifIncrementalRegex, (match, content) => {
-          return isIncrementalVal ? content : '';
-        });
+				const ifIncrementalRegex = /{%\s*if\s+is_incremental\(\s*\)\s*%}([\s\S]*?){%\s*endif\s*%}/g;
+				code = code.replace(ifIncrementalRegex, (match, content) => {
+				return isIncrementalVal ? content : '';
+				});
 
-        // 4. Processa {% for ... %}
-        const forRegex = /{%\s*for\s+(\w+)\s+in\s+(\w+)\s*-%}([\s\S]*?){%\s*endfor\s*-%}/g;
-        let mFor;
-        while ((mFor = forRegex.exec(code)) !== null) {
-          if (vars[mFor[2]]) {
-            let exp = vars[mFor[2]].map(item => mFor[3].replace(new RegExp(`{{\\s*${mFor[1]}\\s*}}`, 'g'), item)).join('\n');
-            code = code.replace(mFor[0], exp);
-          }
-        }
-        
-        // 5. Substitui variáveis simples remanescentes {{ is_incremental() }}
-        code = code.replace(/{{\s*is_incremental\(\s*\)\s*}}/g, isIncrementalVal ? 'true' : 'false');
-        
-        // 6. Substitui {{ ref(...) }}
-        const map = {}; 
-        obj.models.forEach(n => map[n.name] = `${projectId}.${n.schema_name}.${n.name}`);
-        code = code.replace(/\{\{\s*ref\((['"])(.*?)\1\)\s*\}\}/g, (match, q, name) => map[name] || match);
-        
-        m.compiled_code = code;
-        m._table_exists = tableExists;
-        //console.log("DEBUG SQL Gerado para " + m.name + ": " + m.compiled_code);
-      });
-      return obj;
-    }
+				const forRegex = /{%\s*for\s+(\w+)\s+in\s+(\w+)\s*-%}([\s\S]*?){%\s*endfor\s*-%}/g;
+				let mFor;
+				while ((mFor = forRegex.exec(code)) !== null) {
+					if (vars[mFor[2]]) {
+						let exp = vars[mFor[2]].map(item => mFor[3].replace(new RegExp(`{{\\s*${mFor[1]}\\s*}}`, 'g'), item)).join('\n');
+						code = code.replace(mFor[0], exp);
+					}
+				}
+				
+				code = code.replace(/{{\s*is_incremental\(\s*\)\s*}}/g, isIncrementalVal ? 'true' : 'false');
+				const map = {}; 
+				obj.models.forEach(n => map[n.name] = `${projectId}.${n.schema_name}.${n.name}`);
+				code = code.replace(/\{\{\s*ref\((['"])(.*?)\1\)\s*\}\}/g, (match, q, name) => map[name] || match);
+				
+				m.compiled_code = code;
+				m._table_exists = tableExists;
+				//console.log("DEBUG SQL Gerado para " + m.name + ": " + m.compiled_code);
+			});
+			return obj;
+		}
 
 		function _modelRunTests(obj, m, tempTableName) {
 			let testResults = { pass: true, details: [] };
@@ -251,7 +243,6 @@
 				let materialized = (m.materialized || 'table').toLowerCase();
 				let tempTableName = m.name + "__tmp";
 
-				// Executa query na tabela temporária
 				let jobResource = {
 					configuration: { query: {
 						query: m.compiled_code, 
@@ -275,7 +266,6 @@
 					throw new Error(`[ERRO NO MODELO: ${m.name}] ${status.errorResult.message}`);
 				}
 
-				// Roda testes
 				let testResults = _modelRunTests(obj, m, tempTableName);
 				m.test_results = testResults.details; 
 
@@ -284,7 +274,6 @@
 					throw new Error(`[CRITICAL] tests failed in ${m.name}. pipeline aborted.`);
 				}
 
-				// Materializa conforme estratégia
 				if (materialized === 'view') {
 					let viewRes = { tableReference: { projectId, datasetId: m.schema_name, tableId: m.name }, view: { query: m.compiled_code, useLegacySql: false } };
 					try { BigQuery.Tables.remove(projectId, m.schema_name, m.name); } catch(e){}
@@ -294,7 +283,7 @@
 					_executeIncremental(obj, m, tempTableName, projectId);
 				}
 				else {
-					// table ou insert (legado)
+
 					let isAppend = (materialized === 'insert' || m.write_disposition === 'append');
 					let copyJob = { configuration: { query: {
 						query: `SELECT * FROM \`${projectId}.${m.schema_name}.${tempTableName}\``,
@@ -320,7 +309,6 @@
 			let tableExists = m._table_exists;
 
 			if (!tableExists) {
-				// Primeira execução: cria tabela
 				let createJob = { configuration: { query: {
 					query: `SELECT * FROM \`${projectId}.${m.schema_name}.${tempTableName}\``,
 					destinationTable: { projectId, datasetId: m.schema_name, tableId: m.name },
@@ -334,7 +322,6 @@
 				return;
 			}
 
-			// Execuções subsequentes
 			if (strategy === 'append') {
 				let appendJob = { configuration: { query: {
 					query: `SELECT * FROM \`${projectId}.${m.schema_name}.${tempTableName}\``,
@@ -354,7 +341,6 @@
 				let sourceTable = `\`${projectId}.${m.schema_name}.${tempTableName}\``;
 				
 				if (strategy === 'delete+insert') {
-					// Delete + Insert
 					let deleteConditions = uniqueKeys.map(k => `target.${k} = source.${k}`).join(' AND ');
 					let deleteQuery = `
 						DELETE FROM ${targetTable} AS target
@@ -380,10 +366,8 @@
 					console.log(`[INCREMENTAL] ${m.name} - delete+insert strategy`);
 				}
 				else {
-					// Merge
 					let matchCondition = uniqueKeys.map(k => `target.${k} = source.${k}`).join(' AND ');
 					
-					// Pega colunas da temp table
 					let tempTableInfo = BigQuery.Tables.get(projectId, m.schema_name, tempTableName);
 					let columns = tempTableInfo.schema.fields.map(f => f.name);
 					let updateSet = columns.map(c => `target.${c} = source.${c}`).join(', ');
