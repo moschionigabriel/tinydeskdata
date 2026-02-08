@@ -477,7 +477,3 @@
 	this.tinyDeskData = tinyDeskData;
 	return tinyDeskData;
 }).call(this);
-
-let src = () => {
-  tinyDeskData.orchestrate(orchestra)
-}
