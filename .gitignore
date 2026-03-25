@@ -1,0 +1,16 @@
+# Clasp
+example/.clasp.json
+example/.clasprc.json
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
