@@ -34,9 +34,15 @@ tools like Google Sheets and Apps Script that are already there.
 tinydeskdata is the answer to that gap: a library to **Move** (extract and
 load), **Transform** (model), and **Orchestrate** pipeline steps, declaratively,
 entirely inside Google Apps Script — no external infra, no deploy pipeline,
-no DevOps knowledge required to run or maintain it. `move` is the first
-pillar implemented; `model` (transform) and `orchestrate` are the other two
-named in the [Index](#index) below.
+no DevOps knowledge required to run or maintain it.
+
+## Provenance
+
+All three pillars — `move`, `model`, and `orchestrate` — were implemented in
+this repo's initial state by hand, without AI assistance. Spec-driven
+development (this folder) marks the point where AI-assisted work begins on
+the project: specs written from here on either retroactively document
+already-shipped behavior, or describe new behavior before it's built.
 
 This folder holds specs for tinydeskdata, following a spec-driven development workflow:
 
@@ -59,5 +65,6 @@ This folder holds specs for tinydeskdata, following a spec-driven development wo
 |---|---|---|
 | [move.md](move.md) | current | `tinyDeskData.move` — data ingestion/export between Drive, local files, and BigQuery |
 
-`model` and `orchestrate` are intentionally out of scope for now — work is
-focused on `move` first.
+`model` and `orchestrate` are already implemented and shipped (see
+[Provenance](#provenance)), but aren't under active spec-driven work yet —
+`move` is first.

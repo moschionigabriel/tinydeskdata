@@ -1,0 +1,70 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+tinydeskdata is a single-file Google Apps Script library (`tinydeskdata.js`)
+providing Move / Model / Orchestrate primitives for small-data pipelines that
+run entirely inside Apps Script, with no external infra or CI/CD. See
+`spec/README.md` for the full context and design philosophy behind why it
+exists, and `spec/` in general for the spec-driven development workflow this
+project follows — read/update the relevant spec **before** changing or
+adding behavior.
+
+## Architecture
+
+Everything lives in one IIFE in `tinydeskdata.js`, which exposes a global
+`tinyDeskData` with three public methods; everything else is a private
+helper (`_moveGetData`, `_modelCompile`, etc.):
+
+- **`move(obj)`** — extract-and-load. Two-step pipeline: `_moveGetData`
+  reads a 2D array from `obj.source`, `_moveLoadData` writes it to
+  `obj.destination`. Sources/destinations: `drive` (Sheets/Excel/CSV),
+  `here` (local `.sql` run against BigQuery, or `.gs` eval'd as a JS
+  expression), `sql_platform` (a BigQuery table). Fully documented in
+  `spec/move.md` — treat that file as the authoritative contract, including
+  its documented edge cases (silent no-ops on unrecognized config, no
+  `errorResult` check on BigQuery loads, etc.).
+- **`model(obj)`** — a small dbt-like SQL modeling engine. Compiles
+  `.sql.html` files (see `example/*.sql.html`) using regex-based templating
+  for `{{ ref('x') }}`, `{% set x = [...] %}`, `{% if is_incremental() %}`,
+  and `{% for %}` (`_modelCompile`); resolves model dependencies from
+  `ref()` calls (`_modelSetDependencies`) and topologically sorts them
+  (`_topologicalSort`); executes each model into a `<name>__tmp` table, runs
+  column tests (`unique`, `not null`, `accepted_values`, `relationships`)
+  before promoting, and materializes as `table` / `view` / `insert` /
+  `incremental` (with `append`, `merge`, or `delete+insert` strategies).
+- **`orchestrate(obj)`** — runs named `nodes` (each wrapping a `move` or
+  `model` payload) in dependency order via the same topological sort,
+  timestamps each node's start/end, and writes the run as a JSON log to a
+  Drive folder — see `logs/*.json` for the shape.
+
+None of these are unit-testable in isolation: they call Apps Script global
+services directly (`SpreadsheetApp`, `DriveApp`, `Drive`, `BigQuery`,
+`HtmlService`, `Utilities`, `Session`), so the code only runs inside the
+Apps Script runtime.
+
+## How it's consumed
+
+The library isn't installed as an npm/clasp package — it's pulled into a
+consumer's Apps Script project at runtime via
+`eval(UrlFetchApp.fetch('https://raw.githubusercontent.com/.../tinydeskdata.js').getContentText())`
+(see `example/_.js`).
+
+`example/` is itself a real, separate Apps Script project (own
+`appsscript.json` + `.clasp.json`, deployed via `clasp`) that exercises all
+three pillars end-to-end against a "jaffle shop" dataset. It's also the only
+integration test bed that exists — there is no unit test suite, linter, or
+build step in this repo.
+
+## Making and verifying a change
+
+1. Check `spec/` for the relevant spec first; update it alongside the code
+   if behavior changes or diverges from what's documented.
+2. Edit `tinydeskdata.js` directly.
+3. To verify: push `example/` with `clasp push`, run `teste()` (in
+   `example/_.js`) from the Apps Script editor or via `clasp run`, and
+   inspect the resulting log JSON written to the configured Drive
+   `log_destination.folder_id` (compare against `logs/*.json` for the
+   expected shape).
