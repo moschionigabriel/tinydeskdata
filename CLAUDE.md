@@ -75,3 +75,8 @@ build step in this repo.
    connected (`/mcp`) — instead of relying on you to report back what you
    see. This tooling is local, per-session setup, not part of the repo or
    any CI/CD.
+
+## Git workflow
+
+Never commit directly to `master`. Always create a feature branch and open
+a PR — even for small or doc-only changes like edits to this file.
