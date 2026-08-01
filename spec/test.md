@@ -58,12 +58,12 @@ the risk.
 | S2 | `drive` | Google Sheet, named `sheet_name` | data matches the named (non-first) sheet |
 | S3 | `drive` | Excel `.xlsx` | data matches fixture; temp converted Sheet is cleaned up (`Drive.Files.remove` called — verify temp file does not persist in the test folder after the run) |
 | S4 | `drive` | CSV | data matches fixture, including a field with a comma/quote/newline to exercise quoting on the way out |
-| S5 | `drive` | unrecognized mime type (e.g. a plain `.txt` file) | `_moveLoadData` throws (documented edge case: `data` stays `undefined`) — test asserts the throw happens, not a silent pass |
+| S5 | `drive` | unrecognized mime type (e.g. a plain `.txt` file) | `_moveGetData` throws a descriptive `Error` naming the `file_id` and unsupported mimeType (documented in `move.md`) — test asserts the throw happens and the message names the mimeType |
 | S6 | `here` | `.sql` run against BigQuery | data matches a small, known query result against the `tinydeskdata-test` dataset |
 | S7 | `here` | `.gs` literal array | data matches the literal exactly |
-| S8 | `here` | unrecognized extension | `_moveLoadData` throws, same as S5 |
+| S8 | `here` | unrecognized extension | `_moveGetData` throws a descriptive `Error` naming the file and extension, same as S5 |
 | S9 | `sql_platform` | read existing BigQuery table | data matches a small seeded table (order-independent — move()'s query is a bare `select *` with no `ORDER BY`, so BigQuery doesn't guarantee row order), including header row from schema field names |
-| S10 | (any) | unrecognized `source.where` | `_moveLoadData` throws, same as S5 |
+| S10 | (any) | unrecognized `source.where` | `_moveGetData` throws a descriptive `Error` naming the unrecognized value, same as S5 |
 
 ### Destination variants (`here`/`.gs` literal → destination)
 
@@ -75,11 +75,11 @@ the risk.
 | D4 | `drive`/`sheets` | `new_file_flag` true/omitted, with `sheet_name` and `folder_id` | new spreadsheet created, default sheet renamed, file moved into `folder_id` |
 | D5 | `drive`/`csv` | plain write | CSV file created in `folder_id`, UTF-8 BOM present, fields with `,`/`"`/newline correctly quoted |
 | D6 | `drive`/`csv` | `file_name` without `.csv` | `.csv` is appended to the created file's name |
-| D7 | `drive` | unrecognized `file_type` | silent no-op (documented): assert nothing is written and no error is thrown |
+| D7 | `drive` | unrecognized `file_type` | `_moveLoadData` throws a descriptive `Error` naming the unrecognized `file_type` (documented in `move.md`): assert the throw happens, the message names the `file_type`, and nothing is written |
 | D8 | `sql_platform`/bigquery | `write_disposition` omitted | defaults to append (`WRITE_APPEND`) — row count grows, prior rows untouched |
 | D9 | `sql_platform`/bigquery | `write_disposition: 'truncate'` | prior rows gone, only new rows present |
 | D10 | `sql_platform`/bigquery | `partition_column` set | destination table has day partitioning on that column, and its schema type is `DATE` while all other columns are `STRING` |
-| D11 | (any) | unrecognized `destination.where` | silent no-op, same as D7 |
+| D11 | (any) | unrecognized `destination.where` | `_moveLoadData` throws a descriptive `Error` naming the unrecognized value, same as D7 |
 
 ### Interaction tests (explicit end-to-end combinations)
 
@@ -87,7 +87,7 @@ the risk.
 |---|---|---|
 | I1 | `sql_platform` (existing table) → `drive`/`csv` | full round trip through both stages together with real BigQuery-shaped string data, including the destination's UTF-8 BOM byte-for-byte (note: `Blob.getBytes()` in Apps Script returns *signed* bytes, so the BOM check must normalize with `& 0xFF` before comparing to `0xEF`/`0xBB`/`0xBF`) |
 | I2 | `here`/`.gs` literal → `sql_platform`/bigquery, `write_disposition` omitted vs. same literal → `drive`/sheets, `write_disposition` omitted | same source, both destinations, run back to back — makes the documented overwrite-vs-append default asymmetry an assertion instead of a note in a doc |
-| I3 | `here`/`.gs` literal with an unparseable value (`"not-a-date"`) for a `partition_column` → `sql_platform`/bigquery | confirms the job still reports as "done" to the caller and no exception is thrown, per the documented `errorResult`-not-checked behavior — this test asserts the *current* (arguably buggy) behavior so a future intentional fix shows up as an expected spec+test update, not a silent regression. **Not** a column-count mismatch or a `NOT NULL` violation — see I4 and the notes below. |
+| I3 | `here`/`.gs` literal with an unparseable value (`"not-a-date"`) for a `partition_column` → `sql_platform`/bigquery | confirms `_moveLoadData` now checks `status.errorResult` once the load job reports "done" and throws a descriptive `Error` (including BigQuery's own message) instead of treating a failed load as success. **Not** a column-count mismatch or a `NOT NULL` violation — see I4 and the notes below. |
 | I4 | `here`/`.sql` seeded to produce a column-count mismatch against an existing destination table → `sql_platform`/bigquery | confirms this specific kind of failure is instead rejected **synchronously** by `BigQuery.Jobs.insert` and surfaces as a real thrown exception — discovered while building I3 (the original design), and folded back into `move.md`'s edge cases since it wasn't documented before |
 
 ## Config / Interface
@@ -123,16 +123,16 @@ mismatch — consistent with there being no test runner/CI in this repo
 - BigQuery jobs (`sql_platform` source/destination, `here`/`.sql` source)
   are not free or instant — the test suite has real latency and (small)
   cost per run, unlike a typical unit test suite. Keep fixture tables tiny.
-- Because `_moveLoadData` throws a raw, undescriptive `TypeError` on
-  unrecognized sources (S5, S8, S10), those tests assert on *the throw
-  happening*, not on a specific message — tightening that would require
-  changing `tinydeskdata.js` behavior, which is out of scope here (this
-  spec tests documented behavior, it doesn't change it).
-- I3 deliberately exercises a known bug-shaped behavior (BigQuery load
-  failure not surfaced). This is intentional: the point of `test/` is to
-  catch *unintended* regressions, and silently not testing a known gap
-  would leave it unprotected if it's ever accidentally "fixed" as a side
-  effect of an unrelated change without updating `move.md`.
+- `_moveGetData` now throws a descriptive `Error` on unrecognized sources
+  (S5, S8, S10) naming the unrecognized value, instead of leaving `data`
+  `undefined` for `_moveLoadData` to fail on later with a raw,
+  undescriptive `TypeError`. Those tests assert both that the throw happens
+  and that the message names the offending value, so a future regression
+  back to a generic/undescriptive error would be caught.
+- I3 used to deliberately exercise a known bug-shaped behavior (BigQuery
+  load failure not surfaced) as a tripwire against an accidental fix — see
+  git history for that version of this spec. It now asserts the fixed
+  behavior instead: `_moveLoadData` checks `status.errorResult` and throws.
 - I3 went through two wrong designs before landing on the current one, both
   worth keeping as history since they mark real discoveries about
   `move()`, not just test bugs:

@@ -106,15 +106,24 @@ function testD7_unsupportedFileType() {
   var beforeCount = 0;
   while (before.hasNext()) { before.next(); beforeCount++; }
 
-  lib.move({
-    source: hereGsSource_(),
-    destination: { where: 'drive', config: { file_type: 'pdf', file_name: 'd7_output', folder_id: folder.getId() } }
-  });
+  var threw = false;
+  var message = '';
+  try {
+    lib.move({
+      source: hereGsSource_(),
+      destination: { where: 'drive', config: { file_type: 'pdf', file_name: 'd7_output', folder_id: folder.getId() } }
+    });
+  } catch (e) {
+    threw = true;
+    message = e.message;
+  }
+  assert_(threw, 'D7 unrecognized file_type should throw a descriptive Error, per spec/move.md');
+  assert_(message.indexOf('pdf') !== -1, 'D7 error message should name the unsupported file_type, got: ' + message);
 
   var after = folder.getFiles();
   var afterCount = 0;
   while (after.hasNext()) { after.next(); afterCount++; }
-  assertEqual_(afterCount, beforeCount, 'D7 unrecognized file_type should be a silent no-op — no file created');
+  assertEqual_(afterCount, beforeCount, 'D7 unrecognized file_type should not have written a file');
 }
 
 function testD8_bigqueryAppendDefault() {
@@ -161,9 +170,17 @@ function testD10_bigqueryPartitioned() {
 
 function testD11_unsupportedDestinationWhere() {
   var lib = importLib_();
-  // Just needs to not throw — there's no observable state to assert on for a no-op.
-  lib.move({
-    source: hereGsSource_(),
-    destination: { where: 'nope', config: {} }
-  });
+  var threw = false;
+  var message = '';
+  try {
+    lib.move({
+      source: hereGsSource_(),
+      destination: { where: 'nope', config: {} }
+    });
+  } catch (e) {
+    threw = true;
+    message = e.message;
+  }
+  assert_(threw, 'D11 unrecognized destination.where should throw a descriptive Error, same as D7');
+  assert_(message.indexOf('nope') !== -1, 'D11 error message should name the unrecognized destination.where, got: ' + message);
 }

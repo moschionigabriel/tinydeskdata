@@ -49,11 +49,12 @@ function testI2_writeDispositionAsymmetry() {
   assertEqual_(afterRows, beforeRows + 2, 'I2 bigquery destination should have appended onto the baseline row (default = append) — same source, opposite default behavior');
 }
 
-function testI3_bigqueryLoadFailureNotSurfaced() {
+function testI3_bigqueryLoadFailureSurfaced() {
   var lib = importLib_();
   dropBqTableIfExists_('i3_bad_date_target');
 
   var threw = false;
+  var message = '';
   try {
     lib.move({
       // event_date is "not-a-date" — the load schema declares it DATE (it's
@@ -72,10 +73,12 @@ function testI3_bigqueryLoadFailureNotSurfaced() {
     });
   } catch (e) {
     threw = true;
+    message = e.message;
   }
 
-  assert_(!threw, 'I3: move() should NOT throw even though the underlying BigQuery load job fails on an invalid DATE value (documented gap in spec/move.md — errorResult is not checked)');
-  assertEqual_(bqTableRowCountSafe_('i3_bad_date_target'), 0, 'I3: the failed load should not have loaded any rows, but the caller has no way to know that from move() alone');
+  assert_(threw, 'I3: move() should throw once the underlying BigQuery load job reports errorResult on an invalid DATE value (per spec/move.md)');
+  assert_(message.indexOf('i3_bad_date_target') !== -1, 'I3 error message should name the target table, got: ' + message);
+  assertEqual_(bqTableRowCountSafe_('i3_bad_date_target'), 0, 'I3: the failed load should not have loaded any rows');
 }
 
 function testI4_bigquerySchemaMismatchThrowsSynchronously() {

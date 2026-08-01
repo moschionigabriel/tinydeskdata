@@ -30,7 +30,8 @@ read as text/display strings, not typed values.
     the same way, then deletes the temp file (`Drive.Files.remove`).
   - CSV (`text/csv`): reads the blob as UTF-8 and parses with
     `Utilities.parseCsv`.
-  - Any other mime type: falls through, `data` stays `undefined`.
+  - Any other mime type: throws a descriptive `Error` naming the `file_id`
+    and the unsupported `mimeType`.
 
 - **`here`** — reads a local project file:
   - `.sql` file with `obj.source.config.platform == 'bigquery'`: loads the
@@ -43,16 +44,17 @@ read as text/display strings, not typed values.
     (typically an array literal) that becomes `data` directly.
   - `obj.source.config.parent_folder` is prefixed onto the file name if
     present.
-  - Any other extension: falls through, `data` stays `undefined`.
+  - Any other extension (including a `.sql` file whose `platform` isn't
+    `'bigquery'`): throws a descriptive `Error` naming the file and its
+    extension.
 
 - **`sql_platform`** — reads an entire existing table: runs
   `select * from {schema_name}.{table_name}` against BigQuery
   (`obj.source.config.credentials.project_id`), polls until complete,
   returns rows with a header row from the schema.
 
-Any `obj.source.where` value not in the above list results in `data` being
-`undefined`, and `_moveLoadData` will throw when it tries to read
-`data[0].length`.
+Any `obj.source.where` value not in the above list throws a descriptive
+`Error` naming the unrecognized value.
 
 ### Destinations (`obj.destination.where`)
 
@@ -76,6 +78,8 @@ Any `obj.source.where` value not in the above list results in `data` being
     contain `,`, `"`, or newline, doubling internal quotes), prepends a
     UTF-8 BOM, and creates a file named `file_name` (`.csv` appended if
     missing) in `folder_id` (or the Drive root folder if omitted).
+  - Any other `file_type`: throws a descriptive `Error` naming the
+    unsupported value.
 
 - **`sql_platform`** with `platform == 'bigquery'`:
   - Sanitizes header names to `[a-zA-Z0-9_]` only (all other chars → `_`) to
@@ -91,12 +95,14 @@ Any `obj.source.where` value not in the above list results in `data` being
     unlike Sheets destinations where the default is overwrite.
   - If `partition_column` is set, adds day-partitioning
     (`timePartitioning: { type: 'DAY', field: partition_column }`).
-  - Polls `BigQuery.Jobs.get` until `state === 'DONE'`. Does not check
-    `status.errorResult` — a failed load job is not surfaced as a thrown
-    error here.
+  - Polls `BigQuery.Jobs.get` until `state === 'DONE'`, then checks
+    `status.errorResult` and throws a descriptive `Error` (including
+    BigQuery's own error message, and the target `schema_name.table_name`)
+    if the load job failed.
 
 Any `obj.destination.where`/`file_type`/`platform` combination not covered
-above is silently a no-op — nothing is written and no error is raised.
+above throws a descriptive `Error` naming the unrecognized value(s) —
+nothing is written.
 
 ## Config / Interface
 
@@ -142,11 +148,14 @@ above is silently a no-op — nothing is written and no error is raised.
 
 ## Edge cases & known limitations
 
-- Unrecognized `source.where`/mime type/extension leaves `data` as
-  `undefined`; `_moveLoadData` then throws a raw `TypeError` on
-  `data[0].length` rather than a descriptive error.
-- Unrecognized `destination.where`/`file_type` is a **silent no-op** — no
-  error, no data written. Easy to misconfigure and not notice.
+- Unrecognized `source.where`/mime type/extension throws a descriptive
+  `Error` from `_moveGetData` itself (naming the unrecognized value and, for
+  `drive`/`here`, the `file_id`/file name involved) rather than letting
+  `_moveLoadData` fail later with a raw `TypeError` on `data[0].length`.
+- Unrecognized `destination.where`/`file_type` throws a descriptive `Error`
+  from `_moveLoadData` naming the unrecognized value(s) — this used to be a
+  **silent no-op** (no error, no data written, easy to misconfigure and not
+  notice); it now fails loudly instead.
 - All source reads use display values (strings), so numeric/date typing is
   lost on the way in; BigQuery destination columns are always `STRING`
   (except the partition column, forced to `DATE`).
@@ -159,27 +168,32 @@ above is silently a no-op — nothing is written and no error is raised.
   `10.5`) — a lossy round trip if that sheet is later re-read as a `drive`
   source (which itself reads via `getDisplayValues()`, so it sees the
   post-coercion display value, not the original string).
-- BigQuery load job failures are not checked for `errorResult` — the job
-  being "done" is treated as success. A failed load looks like a success to
-  the caller. This applies specifically to failures BigQuery only detects
-  once the job actually runs and tries to process row data — e.g. a value
-  that isn't parseable as its declared column type, such as a
-  non-date string in a `partition_column` (typed `DATE`) — those complete
-  as `DONE` with an unchecked `errorResult`, silently loading zero rows.
-  It does **not** apply to failures BigQuery's API rejects at job
-  *submission* time, before any row is even looked at: the load schema's
-  column count not matching an existing destination table, or a field's
-  implicit `NULLABLE` mode conflicting with a `REQUIRED` column on the
-  destination. `BigQuery.Jobs.insert` itself throws for those, before
-  `_moveLoadData`'s polling loop is ever reached, so those surface as a
-  normal thrown exception out of `move()` — verified empirically via
+- BigQuery load job failures are checked via `status.errorResult` once the
+  job reaches `DONE`, and `_moveLoadData` throws a descriptive `Error`
+  (BigQuery's own error message plus the target `schema_name.table_name`)
+  if the load failed. This covers failures BigQuery only detects once the
+  job actually runs and tries to process row data — e.g. a value that isn't
+  parseable as its declared column type, such as a non-date string in a
+  `partition_column` (typed `DATE`); those used to complete as `DONE` with
+  an unchecked `errorResult`, silently loading zero rows, and now throw
+  instead. Separately, failures BigQuery's API rejects at job *submission*
+  time, before any row is even looked at — the load schema's column count
+  not matching an existing destination table, or a field's implicit
+  `NULLABLE` mode conflicting with a `REQUIRED` column on the destination —
+  were already surfaced as a normal thrown exception before this change,
+  since `BigQuery.Jobs.insert` itself throws for those, before
+  `_moveLoadData`'s polling loop is ever reached — verified empirically via
   `test/` (see `spec/test.md`'s I3/I4 notes for how this was narrowed down).
 - Default write behavior differs by destination type: Sheets defaults to
   overwrite, BigQuery defaults to append. Nothing in the config shape makes
   this asymmetry visible.
-- The Excel-to-temp-Sheet conversion path assumes `Drive.Files.remove`
-  always succeeds; if the script is killed between create and remove, the
-  temp file leaks in Drive.
+- The Excel-to-temp-Sheet conversion path calls `Drive.Files.remove` after
+  the source data has already been read; a failed removal now logs a
+  `console.warn` (naming the temp file id and the original `file_id`) and
+  still returns the successfully-read data, rather than throwing away good
+  data over a cleanup failure. This does **not** cover the script being
+  killed between create and remove — no code runs in that case, so the temp
+  file still leaks in Drive with no warning.
 - `.gs` source files are executed via `eval` on their raw content —
   arbitrary code execution by design, not sandboxed.
 
