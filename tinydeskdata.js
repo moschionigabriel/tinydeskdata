@@ -150,13 +150,11 @@
 		function _moveLoadDataToBigquery(config, data) {
 			let bq_id = config.credentials.project_id;
 			let headers = data[0];
-			let schema = { fields: headers.map(h => {
-				let n = _bqSanitizeColumnName(h);
-				return { name: n, type: (n === config.partition_column ? 'DATE' : 'STRING') };
-			})};
+			let sanitized_headers = headers.map(_bqSanitizeColumnName);
+			let schema = { fields: sanitized_headers.map(n => ({ name: n, type: (n === config.partition_column ? 'DATE' : 'STRING') })) };
 			let rows = data.slice(1).map(r => {
 				let o = {};
-				headers.forEach((h, i) => o[_bqSanitizeColumnName(h)] = r[i] != null ? String(r[i]) : null);
+				sanitized_headers.forEach((h, i) => o[h] = r[i] != null ? String(r[i]) : null);
 				return JSON.stringify(o);
 			}).join('\n');
 			let job = { configuration: { load: {
