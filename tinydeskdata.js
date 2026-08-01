@@ -4,11 +4,10 @@
 		// --- MÉTODOS PRIVADOS ---
 
 		function _moveGetData(obj) {
-			let data;
 			if (obj.source.where == 'drive') {
 				let file_id = obj.source.config.file_id;
 				let mimeType = Drive.Files.get(file_id).mimeType;
-				
+
 				if (mimeType == 'application/vnd.google-apps.spreadsheet') {
 					let file = SpreadsheetApp.openById(file_id);
 					let sheet_name = obj.source.config.sheet_name || file.getSheets()[0].getName();
@@ -19,13 +18,18 @@
 					let temp_file = Drive.Files.create({ title: "temp_tdp", mimeType: MimeType.GOOGLE_SHEETS }, file.getBlob());
 					let file_temp = SpreadsheetApp.openById(temp_file.id);
 					let sheet_name = obj.source.config.sheet_name || file_temp.getSheets()[0].getName();
-					data = file_temp.getSheetByName(sheet_name).getDataRange().getDisplayValues();
-					Drive.Files.remove(temp_file.id);
+					let data = file_temp.getSheetByName(sheet_name).getDataRange().getDisplayValues();
+					try {
+						Drive.Files.remove(temp_file.id);
+					} catch (e) {
+						console.warn(`move(): failed to remove temporary file "${temp_file.id}" created while converting Excel file_id "${file_id}" to a Google Sheet: ${e.message}. The source data was still read successfully, but the temp file may need manual cleanup in Drive.`);
+					}
 					return data;
 				}
 				else if (mimeType == 'text/csv') {
 					return Utilities.parseCsv(DriveApp.getFileById(file_id).getBlob().getDataAsString("utf-8"));
 				}
+				throw new Error(`move(): unsupported source — drive file_id "${file_id}" has mimeType "${mimeType}", which is not one of the supported types (Google Sheet, Excel .xlsx, or CSV).`);
 			} else if (obj.source.where == 'here') {
 				let parent_folder = (obj.source.config.parent_folder) ? obj.source.config.parent_folder + '/' : '';
 				let file_name = parent_folder + obj.source.config.file_name;
@@ -41,6 +45,7 @@
 				} else if (file_extension == 'gs') {
 					return eval('(' + HtmlService.createHtmlOutputFromFile(file_name).getContent().trim() + ')');
 				}
+				throw new Error(`move(): unsupported source — here file "${file_name}" has extension ".${file_extension}", which is not supported (expected ".sql" with source.config.platform === 'bigquery', or ".gs").`);
 			} else if (obj.source.where == 'sql_platform') {
 				let bq_project_id = obj.source.config.credentials.project_id;
 				let query_string = 'select * from ' + obj.source.config.schema_name + '.' + obj.source.config.table_name;
@@ -50,7 +55,7 @@
 				res_data.unshift(query_result.schema.fields.map(field => field.name));
 				return res_data;
 			}
-			return data;
+			throw new Error(`move(): unsupported source.where "${obj.source.where}" — expected 'drive', 'here', or 'sql_platform'.`);
 		}
 
 		function _moveLoadData(obj, data) {
@@ -86,7 +91,9 @@
                     let fileName = obj.destination.config.file_name.endsWith('.csv') ? obj.destination.config.file_name : obj.destination.config.file_name + '.csv';
                     let folder = DriveApp.getFolderById(obj.destination.config.folder_id || DriveApp.getRootFolder().getId());
                     folder.createFile(fileName, '\ufeff' + csvContent, MimeType.CSV);
-                }
+                } else {
+					throw new Error(`move(): unsupported destination — drive file_type "${obj.destination.config.file_type}" is not one of the supported types ('sheets' or 'csv').`);
+				}
 			} else if (obj.destination.where == 'sql_platform' && obj.destination.config.platform == 'bigquery') {
 				let bq_id = obj.destination.config.credentials.project_id;
 				let headers = data[0];
@@ -105,7 +112,13 @@
 				}}};
 				if (obj.destination.config.partition_column) job.configuration.load.timePartitioning = { type: 'DAY', field: obj.destination.config.partition_column };
 				let res = BigQuery.Jobs.insert(job, bq_id, Utilities.newBlob(rows, 'application/octet-stream'));
-				while (BigQuery.Jobs.get(bq_id, res.jobReference.jobId).status.state !== 'DONE') Utilities.sleep(1000);
+				let jobStatus;
+				while ((jobStatus = BigQuery.Jobs.get(bq_id, res.jobReference.jobId).status).state !== 'DONE') Utilities.sleep(1000);
+				if (jobStatus.errorResult) {
+					throw new Error(`move(): BigQuery load into ${obj.destination.config.schema_name}.${obj.destination.config.table_name} failed: ${jobStatus.errorResult.message}`);
+				}
+			} else {
+				throw new Error(`move(): unsupported destination.where "${obj.destination.where}"${obj.destination.config && obj.destination.config.platform ? ` (platform "${obj.destination.config.platform}")` : ''} — expected 'drive', or 'sql_platform' with config.platform === 'bigquery'.`);
 			}
 		}
 

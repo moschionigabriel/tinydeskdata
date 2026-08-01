@@ -18,7 +18,7 @@ function runAll() {
     testD1_sheetsOverwrite, testD2_sheetsAppend, testD3_sheetsNewFile, testD4_sheetsNewFileNamedFolder,
     testD5_csvWrite, testD6_csvNameWithoutExtension, testD7_unsupportedFileType,
     testD8_bigqueryAppendDefault, testD9_bigqueryTruncate, testD10_bigqueryPartitioned, testD11_unsupportedDestinationWhere,
-    testI1_roundTrip, testI2_writeDispositionAsymmetry, testI3_bigqueryLoadFailureNotSurfaced,
+    testI1_roundTrip, testI2_writeDispositionAsymmetry, testI3_bigqueryLoadFailureSurfaced,
     testI4_bigquerySchemaMismatchThrowsSynchronously
   ];
 

@@ -78,6 +78,7 @@ function testS5_unsupportedMime() {
   var name = 's5_out.csv';
   cleanFilesByName_(writeTargetsFolder_(), name);
   var threw = false;
+  var message = '';
   try {
     lib.move({
       source: { where: 'drive', config: { file_id: getFixtureId_('txt_fixture') } },
@@ -85,8 +86,10 @@ function testS5_unsupportedMime() {
     });
   } catch (e) {
     threw = true;
+    message = e.message;
   }
-  assert_(threw, 'S5 unrecognized mime type should throw (data stays undefined, per spec/move.md)');
+  assert_(threw, 'S5 unrecognized mime type should throw a descriptive Error, per spec/move.md');
+  assert_(message.indexOf('text/plain') !== -1, 'S5 error message should name the unsupported mimeType, got: ' + message);
 }
 
 function testS6_hereSql() {
@@ -118,6 +121,7 @@ function testS8_hereUnsupportedExt() {
   var name = 's8_out.csv';
   cleanFilesByName_(writeTargetsFolder_(), name);
   var threw = false;
+  var message = '';
   try {
     lib.move({
       source: { where: 'here', config: { file_name: 'fixture_unused.json' } },
@@ -125,8 +129,10 @@ function testS8_hereUnsupportedExt() {
     });
   } catch (e) {
     threw = true;
+    message = e.message;
   }
-  assert_(threw, 'S8 unrecognized here/ extension should throw, same as S5');
+  assert_(threw, 'S8 unrecognized here/ extension should throw a descriptive Error, same as S5');
+  assert_(message.indexOf('json') !== -1, 'S8 error message should name the unsupported extension, got: ' + message);
 }
 
 function testS9_sqlPlatformRead() {
@@ -146,6 +152,7 @@ function testS10_unsupportedSourceWhere() {
   var name = 's10_out.csv';
   cleanFilesByName_(writeTargetsFolder_(), name);
   var threw = false;
+  var message = '';
   try {
     lib.move({
       source: { where: 'nope', config: {} },
@@ -153,6 +160,8 @@ function testS10_unsupportedSourceWhere() {
     });
   } catch (e) {
     threw = true;
+    message = e.message;
   }
-  assert_(threw, 'S10 unrecognized source.where should throw, same as S5/S8');
+  assert_(threw, 'S10 unrecognized source.where should throw a descriptive Error, same as S5/S8');
+  assert_(message.indexOf('nope') !== -1, 'S10 error message should name the unrecognized source.where, got: ' + message);
 }
