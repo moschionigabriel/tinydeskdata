@@ -1,6 +1,6 @@
 # Clasp
-example/.clasp.json
-example/.clasprc.json
+**/.clasp.json
+**/.clasprc.json
 
 # Node
 node_modules/

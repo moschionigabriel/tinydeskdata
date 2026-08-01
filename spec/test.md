@@ -1,0 +1,169 @@
+# test
+
+status: current
+source: test/ — 25 test functions across sources.js/destinations.js/interactions.js, all passing
+
+## Summary
+
+`test/` is a separate Apps Script project, alongside `example/`, whose only
+job is to exercise `tinyDeskData.move()` against every source and
+destination behavior documented in [move.md](move.md), and assert on the
+result — a real, re-runnable regression check for `move()`, as opposed to
+`example/`, which is a hand-made illustration predating spec-driven
+development (see [README.md#provenance](README.md#provenance)) and isn't
+exercised repeatably by anything.
+
+`model` and `orchestrate` are out of scope for `test/` for now — `move` is
+first, matching the order specs are being written in (see
+[README.md#index](README.md#index)).
+
+## Behavior
+
+### Why not a full source × destination cross product
+
+`move.md` documents `_moveGetData` (source → `data`) and `_moveLoadData`
+(`data` → destination) as two independent stages that only interact through
+the shape of `data` (an array of rows, first row headers, all values
+strings). Source behavior and destination behavior don't interact with each
+other — a bug in the Excel-to-Sheet conversion path doesn't depend on which
+destination the data eventually lands in. A literal cross product (9
+documented source variants × 9 documented destination variants) would
+mostly re-test the same stage twice per case for no added coverage.
+
+Instead, `test/` uses:
+
+1. **One test function per documented source variant**, all writing to the
+   same simple, easy-to-assert-on destination (`drive`/`csv` — no
+   flush/typing/partitioning quirks of its own to confound the assertion).
+2. **One test function per documented destination variant**, all reading
+   from the same simple, deterministic source (a `here`/`.gs` literal array
+   — no external file/service dependency to fetch).
+3. **A small number of explicit interaction tests** for behavior that
+   `move.md`'s "Edge cases & known limitations" section calls out as
+   asymmetric or cross-cutting (write-disposition default differs by
+   destination type, `errorResult` not checked, partitioning, temp-file
+   cleanup) — these need a real end-to-end run because the thing under test
+   is the combination, not either stage alone.
+
+This gets full coverage of every documented behavior in `move.md` at
+roughly `N + M` test functions instead of `N × M`, while still having a few
+true end-to-end combinations for the cases where the combination itself is
+the risk.
+
+### Source variants (→ `drive`/`csv` destination)
+
+| # | `source.where` | Variant | Expected outcome |
+|---|---|---|---|
+| S1 | `drive` | Google Sheet, default sheet | data matches fixture sheet contents — note the fixture's `"10.50"`/`"20.00"` amount cells round-trip as `"10.5"`/`"20"`, per `move.md`'s Sheets auto-type-coercion edge case |
+| S2 | `drive` | Google Sheet, named `sheet_name` | data matches the named (non-first) sheet |
+| S3 | `drive` | Excel `.xlsx` | data matches fixture; temp converted Sheet is cleaned up (`Drive.Files.remove` called — verify temp file does not persist in the test folder after the run) |
+| S4 | `drive` | CSV | data matches fixture, including a field with a comma/quote/newline to exercise quoting on the way out |
+| S5 | `drive` | unrecognized mime type (e.g. a plain `.txt` file) | `_moveLoadData` throws (documented edge case: `data` stays `undefined`) — test asserts the throw happens, not a silent pass |
+| S6 | `here` | `.sql` run against BigQuery | data matches a small, known query result against the `tinydeskdata-test` dataset |
+| S7 | `here` | `.gs` literal array | data matches the literal exactly |
+| S8 | `here` | unrecognized extension | `_moveLoadData` throws, same as S5 |
+| S9 | `sql_platform` | read existing BigQuery table | data matches a small seeded table (order-independent — move()'s query is a bare `select *` with no `ORDER BY`, so BigQuery doesn't guarantee row order), including header row from schema field names |
+| S10 | (any) | unrecognized `source.where` | `_moveLoadData` throws, same as S5 |
+
+### Destination variants (`here`/`.gs` literal → destination)
+
+| # | `destination.where` | Variant | Expected outcome |
+|---|---|---|---|
+| D1 | `drive`/`sheets` | existing file, `write_disposition` omitted | sheet content is cleared and overwritten from row 1 (default = overwrite) |
+| D2 | `drive`/`sheets` | existing file, `write_disposition: 'append'` | new rows start at `getLastRow() + 1`, prior rows untouched |
+| D3 | `drive`/`sheets` | `new_file_flag` true/omitted, no `sheet_name` | new spreadsheet created, named `file_name`, default sheet keeps its name |
+| D4 | `drive`/`sheets` | `new_file_flag` true/omitted, with `sheet_name` and `folder_id` | new spreadsheet created, default sheet renamed, file moved into `folder_id` |
+| D5 | `drive`/`csv` | plain write | CSV file created in `folder_id`, UTF-8 BOM present, fields with `,`/`"`/newline correctly quoted |
+| D6 | `drive`/`csv` | `file_name` without `.csv` | `.csv` is appended to the created file's name |
+| D7 | `drive` | unrecognized `file_type` | silent no-op (documented): assert nothing is written and no error is thrown |
+| D8 | `sql_platform`/bigquery | `write_disposition` omitted | defaults to append (`WRITE_APPEND`) — row count grows, prior rows untouched |
+| D9 | `sql_platform`/bigquery | `write_disposition: 'truncate'` | prior rows gone, only new rows present |
+| D10 | `sql_platform`/bigquery | `partition_column` set | destination table has day partitioning on that column, and its schema type is `DATE` while all other columns are `STRING` |
+| D11 | (any) | unrecognized `destination.where` | silent no-op, same as D7 |
+
+### Interaction tests (explicit end-to-end combinations)
+
+| # | Combination | What it proves |
+|---|---|---|
+| I1 | `sql_platform` (existing table) → `drive`/`csv` | full round trip through both stages together with real BigQuery-shaped string data, including the destination's UTF-8 BOM byte-for-byte (note: `Blob.getBytes()` in Apps Script returns *signed* bytes, so the BOM check must normalize with `& 0xFF` before comparing to `0xEF`/`0xBB`/`0xBF`) |
+| I2 | `here`/`.gs` literal → `sql_platform`/bigquery, `write_disposition` omitted vs. same literal → `drive`/sheets, `write_disposition` omitted | same source, both destinations, run back to back — makes the documented overwrite-vs-append default asymmetry an assertion instead of a note in a doc |
+| I3 | `here`/`.gs` literal with an unparseable value (`"not-a-date"`) for a `partition_column` → `sql_platform`/bigquery | confirms the job still reports as "done" to the caller and no exception is thrown, per the documented `errorResult`-not-checked behavior — this test asserts the *current* (arguably buggy) behavior so a future intentional fix shows up as an expected spec+test update, not a silent regression. **Not** a column-count mismatch or a `NOT NULL` violation — see I4 and the notes below. |
+| I4 | `here`/`.sql` seeded to produce a column-count mismatch against an existing destination table → `sql_platform`/bigquery | confirms this specific kind of failure is instead rejected **synchronously** by `BigQuery.Jobs.insert` and surfaces as a real thrown exception — discovered while building I3 (the original design), and folded back into `move.md`'s edge cases since it wasn't documented before |
+
+## Config / Interface
+
+`test/` mirrors `example/`'s shape: its own `appsscript.json` (same advanced
+services — `Drive` v3, `BigQuery` v2 — and OAuth scopes as `example/`) and
+`.clasp.json` pointing at a dedicated Apps Script project (not shared with
+`example/`, so pushing/running tests can't disturb the jaffle-shop demo).
+
+Backing resources are dedicated and separate from the `jaffle-shop-467514`
+project used by `example/`:
+
+- GCP project: `tinydeskdata-test` (BigQuery API + Drive API enabled,
+  billing linked so query/load jobs run).
+- BigQuery dataset: `tinydeskdata_test` in that project, holding seeded
+  fixture tables and the tables each destination test writes into.
+- Drive: a dedicated test folder holding fixture files (a Sheet with a
+  named second sheet, an `.xlsx`, a `.csv` with quoting edge cases, and an
+  unsupported `.txt`) plus a subfolder used as the write target for `drive`
+  destination tests, kept separate from anything `example/` touches.
+
+Each test function follows the same shape: build the `move()` payload for
+one row of the tables above, call `tinyDeskData.move(payload)`, then read
+back the actual destination state (via `SpreadsheetApp`, `DriveApp`, or a
+BigQuery query) and compare against the expected outcome, logging
+pass/fail. There's no assertion framework dependency available in Apps
+Script by default, so this stays a plain function that throws (or logs) on
+mismatch — consistent with there being no test runner/CI in this repo
+(see `CLAUDE.md`).
+
+## Edge cases & known limitations
+
+- BigQuery jobs (`sql_platform` source/destination, `here`/`.sql` source)
+  are not free or instant — the test suite has real latency and (small)
+  cost per run, unlike a typical unit test suite. Keep fixture tables tiny.
+- Because `_moveLoadData` throws a raw, undescriptive `TypeError` on
+  unrecognized sources (S5, S8, S10), those tests assert on *the throw
+  happening*, not on a specific message — tightening that would require
+  changing `tinydeskdata.js` behavior, which is out of scope here (this
+  spec tests documented behavior, it doesn't change it).
+- I3 deliberately exercises a known bug-shaped behavior (BigQuery load
+  failure not surfaced). This is intentional: the point of `test/` is to
+  catch *unintended* regressions, and silently not testing a known gap
+  would leave it unprotected if it's ever accidentally "fixed" as a side
+  effect of an unrelated change without updating `move.md`.
+- I3 went through two wrong designs before landing on the current one, both
+  worth keeping as history since they mark real discoveries about
+  `move()`, not just test bugs:
+  1. First attempt: a column-count schema mismatch (matching `move.md`'s
+     original wording, "e.g. a column count mismatch"). Running it against
+     real BigQuery showed `BigQuery.Jobs.insert` rejects that case
+     **synchronously**, so `move()` throws — the opposite of "job reports
+     done, error unsurfaced." This became I4 instead.
+  2. Second attempt: a `NOT NULL` constraint violation, assuming that (unlike
+     column count) would only be checked once the job actually ran. It
+     didn't — BigQuery also rejects a schema/mode mismatch (the load's
+     field is implicitly `NULLABLE`, the destination column is `REQUIRED`)
+     synchronously at submission, same as I4.
+  3. What actually reaches the async "job completes, error unsurfaced" path:
+     a value that's structurally valid for its declared type but not
+     semantically parseable — an unparseable string in a `DATE`-typed
+     `partition_column`. The schema itself is valid (a `DATE` field is a
+     normal thing to declare), so `Jobs.insert` accepts the job; only
+     actually converting `"not-a-date"` to a date, per row, can fail — and
+     that only happens once the job runs. This is now I3.
+
+  All three failure modes are real and now documented in `move.md`'s edge
+  cases: two throw synchronously (I4-shaped), one doesn't (I3-shaped).
+- Excel conversion (S3) leaves a real temp file in Drive if the script
+  dies between create and remove (documented in `move.md`); the test only
+  checks the happy path (temp file gone after a normal run), not the crash
+  case, since that would require killing the script mid-execution.
+
+## Open questions
+
+- Whether `model`/`orchestrate` get their own analogous `test/` coverage
+  later, or whether `test/` grows to cover them once `move`'s coverage is
+  considered done — deferred until `move` coverage lands, per
+  [README.md#index](README.md#index).
