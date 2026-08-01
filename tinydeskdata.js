@@ -87,7 +87,7 @@
 			throw new Error(`move(): unsupported source — here file "${file_name}" has extension ".${file_extension}", which is not supported (expected ".sql" with source.config.platform === 'bigquery', or ".gs").`);
 		}
 
-		function _moveGetDataFromSqlPlatform(config) {
+		function _moveGetDataFromBigquery(config) {
 			let query_string = 'select * from ' + config.schema_name + '.' + config.table_name;
 			return _bqRunQuery(query_string, config.credentials.project_id);
 		}
@@ -95,8 +95,8 @@
 		function _moveGetData(obj) {
 			if (obj.source.where == 'drive') return _moveGetDataFromDrive(obj.source.config);
 			if (obj.source.where == 'here') return _moveGetDataFromHere(obj.source.config);
-			if (obj.source.where == 'sql_platform') return _moveGetDataFromSqlPlatform(obj.source.config);
-			throw new Error(`move(): unsupported source.where "${obj.source.where}" — expected 'drive', 'here', or 'sql_platform'.`);
+			if (obj.source.where == 'bigquery') return _moveGetDataFromBigquery(obj.source.config);
+			throw new Error(`move(): unsupported source.where "${obj.source.where}" — expected 'drive', 'here', or 'bigquery'.`);
 		}
 
 		// --- move: destination ---
@@ -105,7 +105,7 @@
 			let id = config.file_id || DriveApp.getFilesByName(config.file_name).next().getId();
 			let ss = SpreadsheetApp.openById(id);
 			let sheet = config.sheet_name ? ss.getSheetByName(config.sheet_name) : ss.getSheets()[0];
-			if (config.write_disposition == 'append') {
+			if (config.mode == 'append') {
 				sheet.getRange(sheet.getLastRow() + 1, 1, num_rows, num_columns).setValues(data);
 			} else {
 				sheet.getDataRange().clearContent();
@@ -123,10 +123,13 @@
 		}
 
 		function _moveLoadDataToSheets(config, data, num_rows, num_columns) {
-			if (config.new_file_flag == false) {
+			let mode = config.mode || 'create';
+			if (mode == 'create') {
+				_moveLoadDataToSheetsNew(config, data, num_rows, num_columns);
+			} else if (mode == 'overwrite' || mode == 'append') {
 				_moveLoadDataToSheetsExisting(config, data, num_rows, num_columns);
 			} else {
-				_moveLoadDataToSheetsNew(config, data, num_rows, num_columns);
+				throw new Error(`move(): unsupported destination — drive/sheets mode "${mode}" is not one of the supported values ('create', 'overwrite', or 'append').`);
 			}
 			SpreadsheetApp.flush();
 		}
@@ -144,7 +147,7 @@
 			throw new Error(`move(): unsupported destination — drive file_type "${config.file_type}" is not one of the supported types ('sheets' or 'csv').`);
 		}
 
-		function _moveLoadDataToSqlPlatform(config, data) {
+		function _moveLoadDataToBigquery(config, data) {
 			let bq_id = config.credentials.project_id;
 			let headers = data[0];
 			let schema = { fields: headers.map(h => {
@@ -173,10 +176,10 @@
 			let num_columns = data[0].length;
 			if (obj.destination.where == 'drive') {
 				_moveLoadDataToDrive(obj.destination.config, data, num_rows, num_columns);
-			} else if (obj.destination.where == 'sql_platform' && obj.destination.config.platform == 'bigquery') {
-				_moveLoadDataToSqlPlatform(obj.destination.config, data);
+			} else if (obj.destination.where == 'bigquery') {
+				_moveLoadDataToBigquery(obj.destination.config, data);
 			} else {
-				throw new Error(`move(): unsupported destination.where "${obj.destination.where}"${obj.destination.config && obj.destination.config.platform ? ` (platform "${obj.destination.config.platform}")` : ''} — expected 'drive', or 'sql_platform' with config.platform === 'bigquery'.`);
+				throw new Error(`move(): unsupported destination.where "${obj.destination.where}" — expected 'drive' or 'bigquery'.`);
 			}
 		}
 

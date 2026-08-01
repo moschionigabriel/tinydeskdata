@@ -14,10 +14,11 @@ function runAll() {
 
   var fns = [
     testS1_sheetDefault, testS2_sheetNamed, testS3_excel, testS4_csv, testS5_unsupportedMime,
-    testS6_hereSql, testS7_hereGs, testS8_hereUnsupportedExt, testS9_sqlPlatformRead, testS10_unsupportedSourceWhere,
+    testS6_hereSql, testS7_hereGs, testS8_hereUnsupportedExt, testS9_bigqueryRead, testS10_unsupportedSourceWhere,
     testD1_sheetsOverwrite, testD2_sheetsAppend, testD3_sheetsNewFile, testD4_sheetsNewFileNamedFolder,
     testD5_csvWrite, testD6_csvNameWithoutExtension, testD7_unsupportedFileType,
     testD8_bigqueryAppendDefault, testD9_bigqueryTruncate, testD10_bigqueryPartitioned, testD11_unsupportedDestinationWhere,
+    testD12_sheetsInvalidMode,
     testI1_roundTrip, testI2_writeDispositionAsymmetry, testI3_bigqueryLoadFailureSurfaced,
     testI4_bigquerySchemaMismatchThrowsSynchronously
   ];

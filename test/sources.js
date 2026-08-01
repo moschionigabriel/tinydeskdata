@@ -135,16 +135,16 @@ function testS8_hereUnsupportedExt() {
   assert_(message.indexOf('json') !== -1, 'S8 error message should name the unsupported extension, got: ' + message);
 }
 
-function testS9_sqlPlatformRead() {
+function testS9_bigqueryRead() {
   var lib = importLib_();
   var name = 's9_out.csv';
   cleanFilesByName_(writeTargetsFolder_(), name);
   lib.move({
-    source: { where: 'sql_platform', config: { schema_name: BQ_DATASET, table_name: 'raw_fixture', credentials: bqCredentials_() } },
+    source: { where: 'bigquery', config: { schema_name: BQ_DATASET, table_name: 'raw_fixture', credentials: bqCredentials_() } },
     destination: csvDestination_(name)
   });
   var rows = readCsvFile_(writeTargetsFolder_(), name);
-  assertRowsEqual_(rows, [['id', 'name', 'amount'], ['1', 'Alice', '10.50'], ['2', 'Bob, Jr.', '20.00'], ['3', 'Carla "C"', '30.25']], 'S9 sql_platform table read');
+  assertRowsEqual_(rows, [['id', 'name', 'amount'], ['1', 'Alice', '10.50'], ['2', 'Bob, Jr.', '20.00'], ['3', 'Carla "C"', '30.25']], 'S9 bigquery table read');
 }
 
 function testS10_unsupportedSourceWhere() {
