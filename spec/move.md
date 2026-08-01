@@ -150,9 +150,30 @@ above is silently a no-op — nothing is written and no error is raised.
 - All source reads use display values (strings), so numeric/date typing is
   lost on the way in; BigQuery destination columns are always `STRING`
   (except the partition column, forced to `DATE`).
+- Writing to a Sheets destination goes through `Range.setValues(data)`,
+  which lets Sheets auto-detect cell types on write: numeric-looking
+  strings (`"1"`, `"10.50"`) are silently stored as real numbers, not text.
+  For whole numbers this is invisible (a number cell showing `"1"` looks
+  identical to a text cell showing `"1"`), but values with trailing
+  zeros/fixed decimals lose that formatting (`"10.50"` → displays as
+  `10.5`) — a lossy round trip if that sheet is later re-read as a `drive`
+  source (which itself reads via `getDisplayValues()`, so it sees the
+  post-coercion display value, not the original string).
 - BigQuery load job failures are not checked for `errorResult` — the job
   being "done" is treated as success. A failed load looks like a success to
-  the caller.
+  the caller. This applies specifically to failures BigQuery only detects
+  once the job actually runs and tries to process row data — e.g. a value
+  that isn't parseable as its declared column type, such as a
+  non-date string in a `partition_column` (typed `DATE`) — those complete
+  as `DONE` with an unchecked `errorResult`, silently loading zero rows.
+  It does **not** apply to failures BigQuery's API rejects at job
+  *submission* time, before any row is even looked at: the load schema's
+  column count not matching an existing destination table, or a field's
+  implicit `NULLABLE` mode conflicting with a `REQUIRED` column on the
+  destination. `BigQuery.Jobs.insert` itself throws for those, before
+  `_moveLoadData`'s polling loop is ever reached, so those surface as a
+  normal thrown exception out of `move()` — verified empirically via
+  `test/` (see `spec/test.md`'s I3/I4 notes for how this was narrowed down).
 - Default write behavior differs by destination type: Sheets defaults to
   overwrite, BigQuery defaults to append. Nothing in the config shape makes
   this asymmetry visible.

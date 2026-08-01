@@ -44,6 +44,16 @@ development (this folder) marks the point where AI-assisted work begins on
 the project: specs written from here on either retroactively document
 already-shipped behavior, or describe new behavior before it's built.
 
+`example/` and `logs/` are artifacts of that original hand-made build: a
+real "jaffle shop" consumer project and one sample orchestration run,
+committed as a worked illustration of what using the library looks like.
+**They are not a test suite** — nothing re-runs them, and a passing
+`teste()` execution only demonstrates the happy path against real data, not
+regression coverage. Treat them as reference material (what the config
+shapes look like in practice, what a log file looks like), not as
+verification. `test/` (see [test.md](test.md)) is the actual, deliberately
+maintained test bed introduced under spec-driven development.
+
 This folder holds specs for tinydeskdata, following a spec-driven development workflow:
 
 1. Before changing or adding behavior, write or update the relevant spec in this folder.
@@ -64,6 +74,7 @@ This folder holds specs for tinydeskdata, following a spec-driven development wo
 | Spec | Status | Covers |
 |---|---|---|
 | [move.md](move.md) | current | `tinyDeskData.move` — data ingestion/export between Drive, local files, and BigQuery |
+| [test.md](test.md) | current | `test/` — the Apps Script project that exercises `move()` combinations against real Drive/BigQuery resources |
 
 `model` and `orchestrate` are already implemented and shipped (see
 [Provenance](#provenance)), but aren't under active spec-driven work yet —
