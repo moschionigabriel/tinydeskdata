@@ -48,7 +48,7 @@ read as text/display strings, not typed values.
     `'bigquery'`): throws a descriptive `Error` naming the file and its
     extension.
 
-- **`sql_platform`** — reads an entire existing table: runs
+- **`bigquery`** — reads an entire existing table: runs
   `select * from {schema_name}.{table_name}` against BigQuery
   (`obj.source.config.credentials.project_id`), polls until complete,
   returns rows with a header row from the schema.
@@ -59,20 +59,21 @@ Any `obj.source.where` value not in the above list throws a descriptive
 ### Destinations (`obj.destination.where`)
 
 - **`drive`**:
-  - `file_type == 'sheets'`:
-    - If `new_file_flag == false`: opens an existing spreadsheet by
-      `file_id`, or looks it up by `file_name` via
+  - `file_type == 'sheets'`: `mode` selects one of three explicit behaviors
+    (default `'create'` if omitted):
+    - `mode == 'overwrite'` or `mode == 'append'`: opens an existing
+      spreadsheet by `file_id`, or looks it up by `file_name` via
       `DriveApp.getFilesByName(...).next()` if no `file_id` given. Selects
       `sheet_name` or the first sheet.
-      - `write_disposition == 'append'`: writes starting at
-        `sheet.getLastRow() + 1`.
-      - anything else (including omitted): clears all content
-        (`clearContent()`) and writes from row 1 — default is
-        overwrite/truncate, not append.
-    - If `new_file_flag` is not `false` (including omitted/undefined):
-      creates a brand new Google Sheet named `file_name`, optionally renames
-      the default sheet to `sheet_name`, writes data from row 1, and moves
-      the file into `folder_id` if set.
+      - `mode == 'append'`: writes starting at `sheet.getLastRow() + 1`.
+      - `mode == 'overwrite'`: clears all content (`clearContent()`) and
+        writes from row 1.
+    - `mode == 'create'` (or omitted): creates a brand new Google Sheet
+      named `file_name`, optionally renames the default sheet to
+      `sheet_name`, writes data from row 1, and moves the file into
+      `folder_id` if set.
+    - Any other `mode` value: throws a descriptive `Error` naming the
+      unsupported value — nothing is written.
     - Calls `SpreadsheetApp.flush()` at the end.
   - `file_type == 'csv'`: builds a CSV string in memory (quoting fields that
     contain `,`, `"`, or newline, doubling internal quotes), prepends a
@@ -81,7 +82,7 @@ Any `obj.source.where` value not in the above list throws a descriptive
   - Any other `file_type`: throws a descriptive `Error` naming the
     unsupported value.
 
-- **`sql_platform`** with `platform == 'bigquery'`:
+- **`bigquery`**:
   - Sanitizes header names to `[a-zA-Z0-9_]` only (all other chars → `_`) to
     derive BigQuery column names.
   - Builds a schema where every column is typed `STRING`, **except** the
@@ -91,8 +92,7 @@ Any `obj.source.where` value not in the above list throws a descriptive
     format) with all values coerced to `String(...)` (or `null`).
   - Loads via `BigQuery.Jobs.insert` with
     `writeDisposition: 'WRITE_' + (write_disposition || 'append').toUpperCase()`
-    — default write disposition for BigQuery destinations is **append**,
-    unlike Sheets destinations where the default is overwrite.
+    — default write disposition for BigQuery destinations is **append**.
   - If `partition_column` is set, adds day-partitioning
     (`timePartitioning: { type: 'DAY', field: partition_column }`).
   - Polls `BigQuery.Jobs.get` until `state === 'DONE'`, then checks
@@ -100,7 +100,7 @@ Any `obj.source.where` value not in the above list throws a descriptive
     BigQuery's own error message, and the target `schema_name.table_name`)
     if the load job failed.
 
-Any `obj.destination.where`/`file_type`/`platform` combination not covered
+Any `obj.destination.where`/`file_type`/`mode` combination not covered
 above throws a descriptive `Error` naming the unrecognized value(s) —
 nothing is written.
 
@@ -109,7 +109,7 @@ nothing is written.
 ```js
 {
   source: {
-    where: 'drive' | 'here' | 'sql_platform',
+    where: 'drive' | 'here' | 'bigquery',
     config: {
       // drive:
       file_id,               // required
@@ -119,24 +119,22 @@ nothing is written.
       file_name,               // required, extension determines handling (.sql | .gs)
       platform,                 // required for .sql, must be 'bigquery'
       credentials: { project_id },
-      // sql_platform:
+      // bigquery:
       schema_name, table_name,
       credentials: { project_id },
     }
   },
   destination: {
-    where: 'drive' | 'sql_platform',
+    where: 'drive' | 'bigquery',
     config: {
       // drive/sheets:
       file_type: 'sheets' | 'csv',
-      file_id,                    // sheets, existing file
-      file_name,                  // sheets (lookup/create) or csv
+      file_id,                    // sheets, existing file (mode: 'overwrite' | 'append')
+      file_name,                  // sheets (mode: 'create', or lookup for 'overwrite'/'append' if no file_id) or csv
       sheet_name,                 // sheets, optional
-      new_file_flag,              // sheets, boolean, default create-new unless explicitly false
-      write_disposition,          // sheets: 'append' | anything else = overwrite
-      folder_id,                  // sheets (new file) / csv destination folder
-      // sql_platform:
-      platform: 'bigquery',
+      mode: 'create' | 'overwrite' | 'append',  // sheets, default 'create'; anything else throws
+      folder_id,                  // sheets (mode: 'create') / csv destination folder
+      // bigquery:
       credentials: { project_id },
       schema_name, table_name,
       write_disposition,          // bigquery: 'append' (default) | 'truncate' | ...
@@ -184,9 +182,31 @@ nothing is written.
   since `BigQuery.Jobs.insert` itself throws for those, before
   `_moveLoadData`'s polling loop is ever reached — verified empirically via
   `test/` (see `spec/test.md`'s I3/I4 notes for how this was narrowed down).
-- Default write behavior differs by destination type: Sheets defaults to
-  overwrite, BigQuery defaults to append. Nothing in the config shape makes
-  this asymmetry visible.
+- Default write behavior differs by destination type and isn't symmetric:
+  Sheets' `mode` defaults to `'create'` (a brand new file) when omitted —
+  targeting an existing file always requires explicitly passing
+  `mode: 'overwrite'` or `mode: 'append'`. BigQuery's `write_disposition`
+  defaults to `'append'` **onto the existing table** when omitted; there's
+  no BigQuery equivalent of Sheets' "create a new one" default.
+- Sheets' `mode`, `file_type`, and `destination.where`/`source.where` are
+  the only config values checked against a fixed set — an unrecognized
+  value in any of them throws a descriptive `Error` naming the bad value
+  and nothing is written. `write_disposition` (BigQuery) is not validated
+  the same way: any value other than `'append'`/`'truncate'`/etc. is passed
+  straight through to `BigQuery.Jobs.insert` as `WRITE_<value>`, which
+  BigQuery itself will reject if it's not a real write disposition.
+- **Breaking change from the previous shape:** `source.where`/
+  `destination.where` used to be `'sql_platform'` with a separate
+  `config.platform === 'bigquery'` check — BigQuery was the only platform
+  ever implemented, so that indirection is gone; both are now simply
+  `where: 'bigquery'`. The Sheets destination's `new_file_flag` (boolean,
+  inverted default — `true`-ish unless explicitly `false`) and the
+  conditionally-relevant `write_disposition` are replaced by a single
+  explicit `mode: 'create' | 'overwrite' | 'append'` (default `'create'`).
+  Old-shape payloads (`where: 'sql_platform'`, `new_file_flag`,
+  Sheets-destination `write_disposition`) are no longer recognized and will
+  throw. `source.config.platform` for `here`/`.sql` files is unchanged —
+  still required, still must be `'bigquery'`.
 - The Excel-to-temp-Sheet conversion path calls `Drive.Files.remove` after
   the source data has already been read; a failed removal now logs a
   `console.warn` (naming the temp file id and the original `file_id`) and
@@ -199,4 +219,7 @@ nothing is written.
 
 ## Open questions
 
-None currently — this spec describes existing shipped behavior.
+- `source.config.platform` for `here`/`.sql` files (required, must be
+  `'bigquery'`) has the same "only one real value ever" shape as the
+  `sql_platform`/`platform` indirection this change removed elsewhere, but
+  wasn't in scope here — left as a candidate for a future pass.

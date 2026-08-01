@@ -13,10 +13,10 @@ function testD1_sheetsOverwrite() {
   var sheetId = getFixtureId_('d1_target_sheet');
   lib.move({
     source: hereGsSource_(),
-    destination: { where: 'drive', config: { file_type: 'sheets', file_id: sheetId, new_file_flag: false } }
+    destination: { where: 'drive', config: { file_type: 'sheets', file_id: sheetId, mode: 'overwrite' } }
   });
   var values = SpreadsheetApp.openById(sheetId).getSheets()[0].getDataRange().getDisplayValues();
-  assertEqual_(values, [['id', 'label'], ['1', 'alpha'], ['2', 'beta']], 'D1 default write_disposition should clear+overwrite from row 1');
+  assertEqual_(values, [['id', 'label'], ['1', 'alpha'], ['2', 'beta']], 'D1 mode: overwrite should clear+overwrite from row 1');
 }
 
 function testD2_sheetsAppend() {
@@ -24,7 +24,7 @@ function testD2_sheetsAppend() {
   var sheetId = getFixtureId_('d2_target_sheet');
   lib.move({
     source: hereGsSource_(),
-    destination: { where: 'drive', config: { file_type: 'sheets', file_id: sheetId, new_file_flag: false, write_disposition: 'append' } }
+    destination: { where: 'drive', config: { file_type: 'sheets', file_id: sheetId, mode: 'append' } }
   });
   var values = SpreadsheetApp.openById(sheetId).getSheets()[0].getDataRange().getDisplayValues();
   // baseline (ensureFixtures) is [id,label]/[0,seed-row]; append writes the
@@ -131,7 +131,7 @@ function testD8_bigqueryAppendDefault() {
   var before = bqTableRowCount_('d8_append_target');
   lib.move({
     source: hereGsSource_(),
-    destination: { where: 'sql_platform', config: { platform: 'bigquery', credentials: bqCredentials_(), schema_name: BQ_DATASET, table_name: 'd8_append_target' } }
+    destination: { where: 'bigquery', config: { credentials: bqCredentials_(), schema_name: BQ_DATASET, table_name: 'd8_append_target' } }
   });
   var after = bqTableRowCount_('d8_append_target');
   assertEqual_(after, before + 2, 'D8 default write_disposition should append (2 data rows added, baseline untouched)');
@@ -141,7 +141,7 @@ function testD9_bigqueryTruncate() {
   var lib = importLib_();
   lib.move({
     source: hereGsSource_(),
-    destination: { where: 'sql_platform', config: { platform: 'bigquery', credentials: bqCredentials_(), schema_name: BQ_DATASET, table_name: 'd9_truncate_target', write_disposition: 'truncate' } }
+    destination: { where: 'bigquery', config: { credentials: bqCredentials_(), schema_name: BQ_DATASET, table_name: 'd9_truncate_target', write_disposition: 'truncate' } }
   });
   var after = bqTableRowCount_('d9_truncate_target');
   assertEqual_(after, 2, 'D9 truncate should replace all rows with just the 2 new ones');
@@ -153,9 +153,9 @@ function testD10_bigqueryPartitioned() {
   lib.move({
     source: { where: 'here', config: { file_name: 'fixture_array_dates.gs' } },
     destination: {
-      where: 'sql_platform',
+      where: 'bigquery',
       config: {
-        platform: 'bigquery', credentials: bqCredentials_(), schema_name: BQ_DATASET, table_name: 'd10_partitioned_target',
+        credentials: bqCredentials_(), schema_name: BQ_DATASET, table_name: 'd10_partitioned_target',
         partition_column: 'event_date'
       }
     }
@@ -183,4 +183,26 @@ function testD11_unsupportedDestinationWhere() {
   }
   assert_(threw, 'D11 unrecognized destination.where should throw a descriptive Error, same as D7');
   assert_(message.indexOf('nope') !== -1, 'D11 error message should name the unrecognized destination.where, got: ' + message);
+}
+
+function testD12_sheetsInvalidMode() {
+  var lib = importLib_();
+  var name = 'd12_new_sheet';
+  var existing = DriveApp.getFilesByName(name);
+  while (existing.hasNext()) existing.next().setTrashed(true);
+
+  var threw = false;
+  var message = '';
+  try {
+    lib.move({
+      source: hereGsSource_(),
+      destination: { where: 'drive', config: { file_type: 'sheets', file_name: name, mode: 'nope' } }
+    });
+  } catch (e) {
+    threw = true;
+    message = e.message;
+  }
+  assert_(threw, 'D12 unrecognized sheets mode should throw a descriptive Error, per spec/move.md');
+  assert_(message.indexOf('nope') !== -1, 'D12 error message should name the unsupported mode, got: ' + message);
+  assert_(!DriveApp.getFilesByName(name).hasNext(), 'D12 unrecognized mode should not have created a spreadsheet');
 }

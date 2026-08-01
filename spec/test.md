@@ -1,7 +1,7 @@
 # test
 
 status: current
-source: test/ — 25 test functions across sources.js/destinations.js/interactions.js, all passing
+source: test/ — 26 test functions across sources.js/destinations.js/interactions.js, all passing
 
 ## Summary
 
@@ -62,33 +62,34 @@ the risk.
 | S6 | `here` | `.sql` run against BigQuery | data matches a small, known query result against the `tinydeskdata-test` dataset |
 | S7 | `here` | `.gs` literal array | data matches the literal exactly |
 | S8 | `here` | unrecognized extension | `_moveGetData` throws a descriptive `Error` naming the file and extension, same as S5 |
-| S9 | `sql_platform` | read existing BigQuery table | data matches a small seeded table (order-independent — move()'s query is a bare `select *` with no `ORDER BY`, so BigQuery doesn't guarantee row order), including header row from schema field names |
+| S9 | `bigquery` | read existing BigQuery table | data matches a small seeded table (order-independent — move()'s query is a bare `select *` with no `ORDER BY`, so BigQuery doesn't guarantee row order), including header row from schema field names |
 | S10 | (any) | unrecognized `source.where` | `_moveGetData` throws a descriptive `Error` naming the unrecognized value, same as S5 |
 
 ### Destination variants (`here`/`.gs` literal → destination)
 
 | # | `destination.where` | Variant | Expected outcome |
 |---|---|---|---|
-| D1 | `drive`/`sheets` | existing file, `write_disposition` omitted | sheet content is cleared and overwritten from row 1 (default = overwrite) |
-| D2 | `drive`/`sheets` | existing file, `write_disposition: 'append'` | new rows start at `getLastRow() + 1`, prior rows untouched |
-| D3 | `drive`/`sheets` | `new_file_flag` true/omitted, no `sheet_name` | new spreadsheet created, named `file_name`, default sheet keeps its name |
-| D4 | `drive`/`sheets` | `new_file_flag` true/omitted, with `sheet_name` and `folder_id` | new spreadsheet created, default sheet renamed, file moved into `folder_id` |
+| D1 | `drive`/`sheets` | existing file, `mode: 'overwrite'` | sheet content is cleared and overwritten from row 1 |
+| D2 | `drive`/`sheets` | existing file, `mode: 'append'` | new rows start at `getLastRow() + 1`, prior rows untouched |
+| D3 | `drive`/`sheets` | `mode` omitted (default `'create'`), no `sheet_name` | new spreadsheet created, named `file_name`, default sheet keeps its name |
+| D4 | `drive`/`sheets` | `mode` omitted (default `'create'`), with `sheet_name` and `folder_id` | new spreadsheet created, default sheet renamed, file moved into `folder_id` |
 | D5 | `drive`/`csv` | plain write | CSV file created in `folder_id`, UTF-8 BOM present, fields with `,`/`"`/newline correctly quoted |
 | D6 | `drive`/`csv` | `file_name` without `.csv` | `.csv` is appended to the created file's name |
 | D7 | `drive` | unrecognized `file_type` | `_moveLoadData` throws a descriptive `Error` naming the unrecognized `file_type` (documented in `move.md`): assert the throw happens, the message names the `file_type`, and nothing is written |
-| D8 | `sql_platform`/bigquery | `write_disposition` omitted | defaults to append (`WRITE_APPEND`) — row count grows, prior rows untouched |
-| D9 | `sql_platform`/bigquery | `write_disposition: 'truncate'` | prior rows gone, only new rows present |
-| D10 | `sql_platform`/bigquery | `partition_column` set | destination table has day partitioning on that column, and its schema type is `DATE` while all other columns are `STRING` |
+| D8 | `bigquery` | `write_disposition` omitted | defaults to append (`WRITE_APPEND`) — row count grows, prior rows untouched |
+| D9 | `bigquery` | `write_disposition: 'truncate'` | prior rows gone, only new rows present |
+| D10 | `bigquery` | `partition_column` set | destination table has day partitioning on that column, and its schema type is `DATE` while all other columns are `STRING` |
 | D11 | (any) | unrecognized `destination.where` | `_moveLoadData` throws a descriptive `Error` naming the unrecognized value, same as D7 |
+| D12 | `drive`/`sheets` | unrecognized `mode` | `_moveLoadData` throws a descriptive `Error` naming the unrecognized `mode` value (documented in `move.md`), same shape as D7/D11 — assert the throw happens, the message names the `mode` value, and nothing is written |
 
 ### Interaction tests (explicit end-to-end combinations)
 
 | # | Combination | What it proves |
 |---|---|---|
-| I1 | `sql_platform` (existing table) → `drive`/`csv` | full round trip through both stages together with real BigQuery-shaped string data, including the destination's UTF-8 BOM byte-for-byte (note: `Blob.getBytes()` in Apps Script returns *signed* bytes, so the BOM check must normalize with `& 0xFF` before comparing to `0xEF`/`0xBB`/`0xBF`) |
-| I2 | `here`/`.gs` literal → `sql_platform`/bigquery, `write_disposition` omitted vs. same literal → `drive`/sheets, `write_disposition` omitted | same source, both destinations, run back to back — makes the documented overwrite-vs-append default asymmetry an assertion instead of a note in a doc |
-| I3 | `here`/`.gs` literal with an unparseable value (`"not-a-date"`) for a `partition_column` → `sql_platform`/bigquery | confirms `_moveLoadData` now checks `status.errorResult` once the load job reports "done" and throws a descriptive `Error` (including BigQuery's own message) instead of treating a failed load as success. **Not** a column-count mismatch or a `NOT NULL` violation — see I4 and the notes below. |
-| I4 | `here`/`.sql` seeded to produce a column-count mismatch against an existing destination table → `sql_platform`/bigquery | confirms this specific kind of failure is instead rejected **synchronously** by `BigQuery.Jobs.insert` and surfaces as a real thrown exception — discovered while building I3 (the original design), and folded back into `move.md`'s edge cases since it wasn't documented before |
+| I1 | `bigquery` (existing table) → `drive`/`csv` | full round trip through both stages together with real BigQuery-shaped string data, including the destination's UTF-8 BOM byte-for-byte (note: `Blob.getBytes()` in Apps Script returns *signed* bytes, so the BOM check must normalize with `& 0xFF` before comparing to `0xEF`/`0xBB`/`0xBF`) |
+| I2 | `here`/`.gs` literal → `bigquery`, `write_disposition` omitted vs. same literal → `drive`/sheets, `mode: 'overwrite'` | same source, both destinations, run back to back — makes the documented default-behavior asymmetry (Sheets requires an explicit `mode`; BigQuery defaults to append) an assertion instead of a note in a doc |
+| I3 | `here`/`.gs` literal with an unparseable value (`"not-a-date"`) for a `partition_column` → `bigquery` | confirms `_moveLoadData` now checks `status.errorResult` once the load job reports "done" and throws a descriptive `Error` (including BigQuery's own message) instead of treating a failed load as success. **Not** a column-count mismatch or a `NOT NULL` violation — see I4 and the notes below. |
+| I4 | `here`/`.sql` seeded to produce a column-count mismatch against an existing destination table → `bigquery` | confirms this specific kind of failure is instead rejected **synchronously** by `BigQuery.Jobs.insert` and surfaces as a real thrown exception — discovered while building I3 (the original design), and folded back into `move.md`'s edge cases since it wasn't documented before |
 
 ## Config / Interface
 
@@ -120,7 +121,7 @@ mismatch — consistent with there being no test runner/CI in this repo
 
 ## Edge cases & known limitations
 
-- BigQuery jobs (`sql_platform` source/destination, `here`/`.sql` source)
+- BigQuery jobs (`bigquery` source/destination, `here`/`.sql` source)
   are not free or instant — the test suite has real latency and (small)
   cost per run, unlike a typical unit test suite. Keep fixture tables tiny.
 - `_moveGetData` now throws a descriptive `Error` on unrecognized sources
@@ -129,6 +130,13 @@ mismatch — consistent with there being no test runner/CI in this repo
   undescriptive `TypeError`. Those tests assert both that the throw happens
   and that the message names the offending value, so a future regression
   back to a generic/undescriptive error would be caught.
+- All `sql_platform`/`platform: 'bigquery'` payloads across S9, D8-D10, and
+  I1-I4 were rewritten to `where: 'bigquery'`, and D1/D2/I2's
+  `new_file_flag`/`write_disposition` Sheets payloads to `mode`, per
+  `move.md`'s config-shape change. D12 is new: it covers the `mode`
+  validation that shape change introduced (an unrecognized `mode` now
+  throws, same as D7's unrecognized `file_type`), which didn't exist as
+  documented behavior before.
 - I3 used to deliberately exercise a known bug-shaped behavior (BigQuery
   load failure not surfaced) as a tripwire against an accidental fix — see
   git history for that version of this spec. It now asserts the fixed

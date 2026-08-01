@@ -9,7 +9,7 @@ function testI1_roundTrip() {
   cleanFilesByName_(folder, name);
 
   lib.move({
-    source: { where: 'sql_platform', config: { schema_name: BQ_DATASET, table_name: 'raw_fixture', credentials: bqCredentials_() } },
+    source: { where: 'bigquery', config: { schema_name: BQ_DATASET, table_name: 'raw_fixture', credentials: bqCredentials_() } },
     destination: csvDestination_(name)
   });
 
@@ -21,7 +21,7 @@ function testI1_roundTrip() {
   assert_(rawBytes[0] === 0xEF && rawBytes[1] === 0xBB && rawBytes[2] === 0xBF, 'I1 csv destination should prepend a UTF-8 BOM');
 
   var rows = readCsvFile_(folder, name);
-  assertRowsEqual_(rows, [['id', 'name', 'amount'], ['1', 'Alice', '10.50'], ['2', 'Bob, Jr.', '20.00'], ['3', 'Carla "C"', '30.25']], 'I1 sql_platform -> csv round trip contents');
+  assertRowsEqual_(rows, [['id', 'name', 'amount'], ['1', 'Alice', '10.50'], ['2', 'Bob, Jr.', '20.00'], ['3', 'Carla "C"', '30.25']], 'I1 bigquery -> csv round trip contents');
 }
 
 function testI2_writeDispositionAsymmetry() {
@@ -34,19 +34,23 @@ function testI2_writeDispositionAsymmetry() {
     destination: null
   };
 
-  // Same source, same omitted write_disposition, two destination types run back to back.
+  // Same source run against both destination types: Sheets has no implicit
+  // "write into an existing file" default anymore, so mode: 'overwrite' is
+  // explicit here; BigQuery's write_disposition is left omitted to exercise
+  // its own default (append) — the asymmetry being demonstrated is that
+  // BigQuery still has an implicit default at all, while Sheets doesn't.
   lib.move(Object.assign({}, payload, {
-    destination: { where: 'drive', config: { file_type: 'sheets', file_id: sheetId, new_file_flag: false } }
+    destination: { where: 'drive', config: { file_type: 'sheets', file_id: sheetId, mode: 'overwrite' } }
   }));
   lib.move(Object.assign({}, payload, {
-    destination: { where: 'sql_platform', config: { platform: 'bigquery', credentials: bqCredentials_(), schema_name: BQ_DATASET, table_name: 'i2_target_table' } }
+    destination: { where: 'bigquery', config: { credentials: bqCredentials_(), schema_name: BQ_DATASET, table_name: 'i2_target_table' } }
   }));
 
   var sheetValues = SpreadsheetApp.openById(sheetId).getSheets()[0].getDataRange().getDisplayValues();
-  assertEqual_(sheetValues, [['id', 'label'], ['1', 'alpha'], ['2', 'beta']], 'I2 sheets destination should have overwritten the baseline row (default = overwrite)');
+  assertEqual_(sheetValues, [['id', 'label'], ['1', 'alpha'], ['2', 'beta']], 'I2 sheets destination should have overwritten the baseline row (explicit mode: overwrite)');
 
   var afterRows = bqTableRowCount_('i2_target_table');
-  assertEqual_(afterRows, beforeRows + 2, 'I2 bigquery destination should have appended onto the baseline row (default = append) — same source, opposite default behavior');
+  assertEqual_(afterRows, beforeRows + 2, 'I2 bigquery destination should have appended onto the baseline row (default = append) — same source, only one side has an implicit default');
 }
 
 function testI3_bigqueryLoadFailureSurfaced() {
@@ -67,8 +71,8 @@ function testI3_bigqueryLoadFailureSurfaced() {
       // synchronously at submission).
       source: { where: 'here', config: { file_name: 'fixture_bad_date.gs' } },
       destination: {
-        where: 'sql_platform',
-        config: { platform: 'bigquery', credentials: bqCredentials_(), schema_name: BQ_DATASET, table_name: 'i3_bad_date_target', partition_column: 'event_date' }
+        where: 'bigquery',
+        config: { credentials: bqCredentials_(), schema_name: BQ_DATASET, table_name: 'i3_bad_date_target', partition_column: 'event_date' }
       }
     });
   } catch (e) {
@@ -96,7 +100,7 @@ function testI4_bigquerySchemaMismatchThrowsSynchronously() {
       // "successful" job. Not documented in spec/move.md before this test
       // bed found it; worth folding back into that spec's edge cases.
       source: { where: 'here', config: { file_name: 'fixture_orders_query.sql', platform: 'bigquery', credentials: bqCredentials_() } },
-      destination: { where: 'sql_platform', config: { platform: 'bigquery', credentials: bqCredentials_(), schema_name: BQ_DATASET, table_name: 'i4_fixed_schema' } }
+      destination: { where: 'bigquery', config: { credentials: bqCredentials_(), schema_name: BQ_DATASET, table_name: 'i4_fixed_schema' } }
     });
   } catch (e) {
     threw = true;

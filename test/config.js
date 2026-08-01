@@ -35,9 +35,9 @@ function assertEqual_(actual, expected, message) {
   if (a !== e) throw new Error((message || 'values differ') + ' — expected ' + e + ', got ' + a);
 }
 
-// For asserting on rows read via sql_platform: move()'s own query is a bare
-// `select * from schema.table` with no ORDER BY (see spec/move.md), so
-// BigQuery is free to return rows in any order. Sort by the header row +
+// For asserting on rows read via the bigquery source: move()'s own query is
+// a bare `select * from schema.table` with no ORDER BY (see spec/move.md),
+// so BigQuery is free to return rows in any order. Sort by the header row +
 // first column so comparisons are order-independent but still catch actual
 // content differences.
 function assertRowsEqual_(actual, expected, message) {
