@@ -102,3 +102,18 @@ changes to `_moveGetData`/`_moveLoadData`, not just read as a reference.
 
 Never commit directly to `master`. Always create a feature branch and open
 a PR — even for small or doc-only changes like edits to this file.
+
+Branch names and PR titles use a `type: description` (PR title) /
+`type/description` (branch) nomenclature, where `type` is one of:
+
+- `feature` — new behavior
+- `fix` — bug fixes, including turning an undocumented/silent failure into
+  correct or descriptive behavior
+- `refactor` — internal restructuring with no behavior change
+- `docs` — documentation-only changes (including spec/CLAUDE.md edits)
+- `test` — changes to `test/` (or, hypothetically, other test tooling)
+- `chore` — maintenance that doesn't fit the above (dependency bumps,
+  formatting, etc.)
+
+E.g. branch `fix/move-error-messages`, PR title
+`fix: replace silent failures in move() with descriptive errors`.
