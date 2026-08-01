@@ -5,13 +5,13 @@ source: test/ — 26 test functions across sources.js/destinations.js/interactio
 
 ## Summary
 
-`test/` is a separate Apps Script project, alongside `example/`, whose only
-job is to exercise `tinyDeskData.move()` against every source and
-destination behavior documented in [move.md](move.md), and assert on the
-result — a real, re-runnable regression check for `move()`, as opposed to
-`example/`, which is a hand-made illustration predating spec-driven
-development (see [README.md#provenance](README.md#provenance)) and isn't
-exercised repeatably by anything.
+`test/` is a separate Apps Script project whose only job is to exercise
+`tinyDeskData.move()` against every source and destination behavior
+documented in [move.md](move.md), and assert on the result — a real,
+re-runnable regression check for `move()`, as opposed to the hand-made
+illustration predating spec-driven development (see
+[README.md#provenance](README.md#provenance)), which isn't exercised
+repeatably by anything.
 
 `model` and `orchestrate` are out of scope for `test/` for now — `move` is
 first, matching the order specs are being written in (see
@@ -93,13 +93,12 @@ the risk.
 
 ## Config / Interface
 
-`test/` mirrors `example/`'s shape: its own `appsscript.json` (same advanced
-services — `Drive` v3, `BigQuery` v2 — and OAuth scopes as `example/`) and
-`.clasp.json` pointing at a dedicated Apps Script project (not shared with
-`example/`, so pushing/running tests can't disturb the jaffle-shop demo).
+`test/` has its own `appsscript.json` (advanced services `Drive` v3,
+`BigQuery` v2, and the corresponding OAuth scopes) and `.clasp.json`
+pointing at a dedicated Apps Script project, so pushing/running tests can't
+disturb anything else.
 
-Backing resources are dedicated and separate from the `jaffle-shop-467514`
-project used by `example/`:
+Backing resources are dedicated, separate from any other project:
 
 - GCP project: `tinydeskdata-test` (BigQuery API + Drive API enabled,
   billing linked so query/load jobs run).
@@ -108,7 +107,7 @@ project used by `example/`:
 - Drive: a dedicated test folder holding fixture files (a Sheet with a
   named second sheet, an `.xlsx`, a `.csv` with quoting edge cases, and an
   unsupported `.txt`) plus a subfolder used as the write target for `drive`
-  destination tests, kept separate from anything `example/` touches.
+  destination tests, kept separate from any other project's resources.
 
 Each test function follows the same shape: build the `move()` payload for
 one row of the tables above, call `tinyDeskData.move(payload)`, then read
