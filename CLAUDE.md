@@ -64,7 +64,14 @@ build step in this repo.
    if behavior changes or diverges from what's documented.
 2. Edit `tinydeskdata.js` directly.
 3. To verify: push `example/` with `clasp push`, run `teste()` (in
-   `example/_.js`) from the Apps Script editor or via `clasp run`, and
-   inspect the resulting log JSON written to the configured Drive
+   `example/_.js`) from the Apps Script editor or via `clasp run`, then
+   confirm it succeeded by checking BigQuery table/row state and reading
+   the resulting log JSON from the configured Drive
    `log_destination.folder_id` (compare against `logs/*.json` for the
-   expected shape).
+   expected shape). A Claude Code session can do that inspection itself
+   — `bq ls` / `bq query` if `gcloud`/`bq` are installed and authenticated
+   (`gcloud auth login`) against the project in `example/_.js`, and
+   reading the log JSON directly if the Google Drive connector is
+   connected (`/mcp`) — instead of relying on you to report back what you
+   see. This tooling is local, per-session setup, not part of the repo or
+   any CI/CD.
