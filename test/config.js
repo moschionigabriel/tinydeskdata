@@ -60,6 +60,36 @@ function bqQuery_(query) {
   return { headers: headers, rows: rows };
 }
 
+// Submits a query job without waiting for it — pairs with bqAwaitQueries_ so
+// independent queries (e.g. fixture table creation) can run concurrently on
+// BigQuery's side instead of paying full submit+poll latency one at a time.
+// Same billing as bqQuery_ per job (bytes scanned/written), since batching
+// only changes when jobs run, not how many or what they scan.
+function bqQueryAsync_(query) {
+  var job = BigQuery.Jobs.insert({ configuration: { query: { query: query, useLegacySql: false } } }, BQ_PROJECT_ID);
+  return job.jobReference.jobId;
+}
+
+// Polls a batch of job IDs together — one sleep per round covering every
+// still-pending job, instead of one full poll loop per job in sequence.
+// Jobs.get is a free metadata call (no bytes scanned), so this adds no
+// BigQuery cost, only less wall-clock time waiting on jobs that already run
+// concurrently server-side.
+function bqAwaitQueries_(jobIds) {
+  var pending = jobIds.slice();
+  while (pending.length) {
+    pending = pending.filter(function (jobId) {
+      var status = BigQuery.Jobs.get(BQ_PROJECT_ID, jobId);
+      if (status.status.state !== 'DONE') return true;
+      if (status.status.errorResult) {
+        throw new Error('BigQuery job ' + jobId + ' failed: ' + status.status.errorResult.message);
+      }
+      return false;
+    });
+    if (pending.length) Utilities.sleep(500);
+  }
+}
+
 function bqTableRowCount_(tableName) {
   return Number(bqQuery_('select count(*) as n from ' + BQ_DATASET + '.' + tableName).rows[0][0]);
 }

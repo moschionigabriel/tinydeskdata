@@ -7,15 +7,48 @@
 // that touches BigQuery.
 
 function ensureBqFixtures() {
-  // S6/S9/I1/I3 source: a small existing table to read from / mismatch against.
-  bqQuery_(
-    'create or replace table ' + BQ_DATASET + '.raw_fixture as ' +
-    'select * from unnest([' +
-    'struct("1" as id, "Alice" as name, "10.50" as amount), ' +
-    'struct("2" as id, "Bob, Jr." as name, "20.00" as amount), ' +
-    'struct("3" as id, "Carla \\"C\\"" as name, "30.25" as amount)' +
-    '])'
-  );
+  // The 5 "create or replace table" fixtures below are mutually independent
+  // (different tables, no reads of each other), so submit them all as one
+  // batch and poll together (bqQueryAsync_/bqAwaitQueries_) instead of
+  // blocking on each job's own submit+poll round trip in sequence — same
+  // jobs, same bytes billed, just running concurrently server-side instead
+  // of one after another.
+  var jobIds = [
+    // S6/S9/I1/I3 source: a small existing table to read from / mismatch against.
+    bqQueryAsync_(
+      'create or replace table ' + BQ_DATASET + '.raw_fixture as ' +
+      'select * from unnest([' +
+      'struct("1" as id, "Alice" as name, "10.50" as amount), ' +
+      'struct("2" as id, "Bob, Jr." as name, "20.00" as amount), ' +
+      'struct("3" as id, "Carla \\"C\\"" as name, "30.25" as amount)' +
+      '])'
+    ),
+
+    // I4: a 2-column table that fixture_orders_query.sql.html's 3-column
+    // result doesn't match — this is the column-count-mismatch case that
+    // turns out to throw synchronously (see I3's comment below).
+    bqQueryAsync_('create or replace table ' + BQ_DATASET + '.i4_fixed_schema (id STRING, name STRING)'),
+
+    // D8: append-default destination, seeded with one baseline row.
+    bqQueryAsync_(
+      'create or replace table ' + BQ_DATASET + '.d8_append_target as ' +
+      'select * from unnest([struct("0" as id, "seed-row" as label)])'
+    ),
+
+    // D9: truncate destination, seeded with two baseline rows that should be gone after the test.
+    bqQueryAsync_(
+      'create or replace table ' + BQ_DATASET + '.d9_truncate_target as ' +
+      'select * from unnest([struct("0" as id, "seed-row-a" as label), struct("00" as id, "seed-row-b" as label)])'
+    ),
+
+    // I2: its own append-default target, kept separate from D8's so I2 stays
+    // self-contained and order-independent.
+    bqQueryAsync_(
+      'create or replace table ' + BQ_DATASET + '.i2_target_table as ' +
+      'select * from unnest([struct("0" as id, "seed-row" as label)])'
+    )
+  ];
+  bqAwaitQueries_(jobIds);
 
   // I3: dropped rather than seeded — move() relies on default
   // createDisposition (CREATE_IF_NEEDED), and the failure this test needs
@@ -24,35 +57,13 @@ function ensureBqFixtures() {
   // attempts (column-count mismatch, then a NOT NULL constraint) both
   // turned out to be rejected *synchronously* by BigQuery.Jobs.insert's own
   // schema-compatibility check — see spec/test.md's I3 notes.
-  dropBqTableIfExists_('i3_bad_date_target');
-
-  // I4: a 2-column table that fixture_orders_query.sql.html's 3-column
-  // result doesn't match — this is the column-count-mismatch case that
-  // turned out to throw synchronously (see I3's comment above).
-  bqQuery_('create or replace table ' + BQ_DATASET + '.i4_fixed_schema (id STRING, name STRING)');
-
-  // D8: append-default destination, seeded with one baseline row.
-  bqQuery_(
-    'create or replace table ' + BQ_DATASET + '.d8_append_target as ' +
-    'select * from unnest([struct("0" as id, "seed-row" as label)])'
-  );
-
-  // D9: truncate destination, seeded with two baseline rows that should be gone after the test.
-  bqQuery_(
-    'create or replace table ' + BQ_DATASET + '.d9_truncate_target as ' +
-    'select * from unnest([struct("0" as id, "seed-row-a" as label), struct("00" as id, "seed-row-b" as label)])'
-  );
-
-  // I2: its own append-default target, kept separate from D8's so I2 stays
-  // self-contained and order-independent.
-  bqQuery_(
-    'create or replace table ' + BQ_DATASET + '.i2_target_table as ' +
-    'select * from unnest([struct("0" as id, "seed-row" as label)])'
-  );
-
+  //
   // D10: partitioned destination — dropped rather than seeded, since move()
   // relies on BigQuery's default createDisposition (CREATE_IF_NEEDED) to
   // create it fresh with day partitioning on event_date.
+  //
+  // Tables.remove is a metadata call, not a query job — no batching benefit.
+  dropBqTableIfExists_('i3_bad_date_target');
   dropBqTableIfExists_('d10_partitioned_target');
 
   Logger.log('BigQuery fixtures ready in ' + BQ_PROJECT_ID + '.' + BQ_DATASET);
