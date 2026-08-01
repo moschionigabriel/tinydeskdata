@@ -81,6 +81,16 @@ changes to `_moveGetData`/`_moveLoadData`, not just read as a reference.
    confirm against the dedicated `tinydeskdata-test` BigQuery project and
    the test Drive fixtures — this is the repeatable regression check for
    `move()`.
+   - `test/_.js`'s `importLib_()` always fetches `tinydeskdata.js` from
+     GitHub raw **`master`**, never local edits or the current feature
+     branch (mirrors how real consumers use the library — see "How it's
+     consumed"). So running `test/` as-is before a change is merged only
+     re-tests the old, already-shipped code. To verify pre-merge: push the
+     feature branch to `origin` (raw.githubusercontent.com serves any
+     pushed branch), temporarily point `importLib_()`'s URL at that branch,
+     `clasp push` `test/`, run the tests, then revert the URL back to
+     `master` before merging — it's a test-harness-only edit and shouldn't
+     be committed/shipped.
 4. To sanity-check the full pipeline end-to-end (move + model +
    orchestrate together): push `example/` with `clasp push`, run `teste()`
    (in `example/_.js`) from the Apps Script editor or via `clasp run`, then

@@ -3,120 +3,178 @@
 
 		// --- MÉTODOS PRIVADOS ---
 
-		function _moveGetData(obj) {
-			if (obj.source.where == 'drive') {
-				let file_id = obj.source.config.file_id;
-				let mimeType = Drive.Files.get(file_id).mimeType;
+		// --- move: shared helpers ---
 
-				if (mimeType == 'application/vnd.google-apps.spreadsheet') {
-					let file = SpreadsheetApp.openById(file_id);
-					let sheet_name = obj.source.config.sheet_name || file.getSheets()[0].getName();
-					return file.getSheetByName(sheet_name).getDataRange().getDisplayValues();
-				}
-				else if (mimeType == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
-					let file = DriveApp.getFileById(file_id);
-					let temp_file = Drive.Files.create({ title: "temp_tdp", mimeType: MimeType.GOOGLE_SHEETS }, file.getBlob());
-					let file_temp = SpreadsheetApp.openById(temp_file.id);
-					let sheet_name = obj.source.config.sheet_name || file_temp.getSheets()[0].getName();
-					let data = file_temp.getSheetByName(sheet_name).getDataRange().getDisplayValues();
-					try {
-						Drive.Files.remove(temp_file.id);
-					} catch (e) {
-						console.warn(`move(): failed to remove temporary file "${temp_file.id}" created while converting Excel file_id "${file_id}" to a Google Sheet: ${e.message}. The source data was still read successfully, but the temp file may need manual cleanup in Drive.`);
-					}
-					return data;
-				}
-				else if (mimeType == 'text/csv') {
-					return Utilities.parseCsv(DriveApp.getFileById(file_id).getBlob().getDataAsString("utf-8"));
-				}
-				throw new Error(`move(): unsupported source — drive file_id "${file_id}" has mimeType "${mimeType}", which is not one of the supported types (Google Sheet, Excel .xlsx, or CSV).`);
-			} else if (obj.source.where == 'here') {
-				let parent_folder = (obj.source.config.parent_folder) ? obj.source.config.parent_folder + '/' : '';
-				let file_name = parent_folder + obj.source.config.file_name;
-				let file_extension = file_name.match(/\.(.*)/)[1];
-				if (file_extension == 'sql' && obj.source.config.platform == 'bigquery') {
-					let bq_project_id = obj.source.config.credentials.project_id;
-					let query_string = HtmlService.createHtmlOutputFromFile(file_name).getContent().toString().replace(/\n/g, '');
-					let query_result = BigQuery.Jobs.query({ query: query_string, useLegacySql: false }, bq_project_id);
-					while (!query_result.jobComplete) { Utilities.sleep(500); query_result = BigQuery.Jobs.getQueryResults(bq_project_id, query_result.jobReference.jobId); }
-					let res_data = query_result.rows.map(row => row.f.map(cell => cell.v));
-					res_data.unshift(query_result.schema.fields.map(field => field.name));
-					return res_data;
-				} else if (file_extension == 'gs') {
-					return eval('(' + HtmlService.createHtmlOutputFromFile(file_name).getContent().trim() + ')');
-				}
-				throw new Error(`move(): unsupported source — here file "${file_name}" has extension ".${file_extension}", which is not supported (expected ".sql" with source.config.platform === 'bigquery', or ".gs").`);
-			} else if (obj.source.where == 'sql_platform') {
-				let bq_project_id = obj.source.config.credentials.project_id;
-				let query_string = 'select * from ' + obj.source.config.schema_name + '.' + obj.source.config.table_name;
-				let query_result = BigQuery.Jobs.query({ query: query_string, useLegacySql: false }, bq_project_id);
-				while (!query_result.jobComplete) { Utilities.sleep(500); query_result = BigQuery.Jobs.getQueryResults(bq_project_id, query_result.jobReference.jobId); }
-				let res_data = query_result.rows.map(row => row.f.map(cell => cell.v));
-				res_data.unshift(query_result.schema.fields.map(field => field.name));
-				return res_data;
+		function _bqRunQuery(query_string, project_id) {
+			let query_result = BigQuery.Jobs.query({ query: query_string, useLegacySql: false }, project_id);
+			while (!query_result.jobComplete) {
+				Utilities.sleep(500);
+				query_result = BigQuery.Jobs.getQueryResults(project_id, query_result.jobReference.jobId);
 			}
+			let res_data = query_result.rows.map(row => row.f.map(cell => cell.v));
+			res_data.unshift(query_result.schema.fields.map(field => field.name));
+			return res_data;
+		}
+
+		function _bqPollLoadJob(project_id, job_id) {
+			let status;
+			while ((status = BigQuery.Jobs.get(project_id, job_id).status).state !== 'DONE') Utilities.sleep(1000);
+			return status;
+		}
+
+		function _bqSanitizeColumnName(name) {
+			return String(name).replace(/[^a-zA-Z0-9_]/g, '_');
+		}
+
+		function _readSheetDisplayValues(spreadsheet, sheet_name) {
+			let sheet = sheet_name ? spreadsheet.getSheetByName(sheet_name) : spreadsheet.getSheets()[0];
+			return sheet.getDataRange().getDisplayValues();
+		}
+
+		function _buildCsvContent(data) {
+			return data.map(row => row.map(c => {
+				let s = String(c);
+				return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s;
+			}).join(',')).join('\n');
+		}
+
+		// --- move: source ---
+
+		function _moveGetDataFromGoogleSheet(file_id, config) {
+			return _readSheetDisplayValues(SpreadsheetApp.openById(file_id), config.sheet_name);
+		}
+
+		function _moveGetDataFromExcel(file_id, config) {
+			let file = DriveApp.getFileById(file_id);
+			let temp_file = Drive.Files.create({ title: "temp_tdp", mimeType: MimeType.GOOGLE_SHEETS }, file.getBlob());
+			let data = _readSheetDisplayValues(SpreadsheetApp.openById(temp_file.id), config.sheet_name);
+			try {
+				Drive.Files.remove(temp_file.id);
+			} catch (e) {
+				console.warn(`move(): failed to remove temporary file "${temp_file.id}" created while converting Excel file_id "${file_id}" to a Google Sheet: ${e.message}. The source data was still read successfully, but the temp file may need manual cleanup in Drive.`);
+			}
+			return data;
+		}
+
+		function _moveGetDataFromCsv(file_id) {
+			return Utilities.parseCsv(DriveApp.getFileById(file_id).getBlob().getDataAsString("utf-8"));
+		}
+
+		function _moveGetDataFromDrive(config) {
+			let file_id = config.file_id;
+			let mimeType = Drive.Files.get(file_id).mimeType;
+			if (mimeType == 'application/vnd.google-apps.spreadsheet') return _moveGetDataFromGoogleSheet(file_id, config);
+			if (mimeType == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') return _moveGetDataFromExcel(file_id, config);
+			if (mimeType == 'text/csv') return _moveGetDataFromCsv(file_id);
+			throw new Error(`move(): unsupported source — drive file_id "${file_id}" has mimeType "${mimeType}", which is not one of the supported types (Google Sheet, Excel .xlsx, or CSV).`);
+		}
+
+		function _moveGetDataFromHereSql(file_name, config) {
+			let query_string = HtmlService.createHtmlOutputFromFile(file_name).getContent().toString().replace(/\n/g, '');
+			return _bqRunQuery(query_string, config.credentials.project_id);
+		}
+
+		function _moveGetDataFromHereGs(file_name) {
+			return eval('(' + HtmlService.createHtmlOutputFromFile(file_name).getContent().trim() + ')');
+		}
+
+		function _moveGetDataFromHere(config) {
+			let parent_folder = config.parent_folder ? config.parent_folder + '/' : '';
+			let file_name = parent_folder + config.file_name;
+			let file_extension = file_name.match(/\.(.*)/)[1];
+			if (file_extension == 'sql' && config.platform == 'bigquery') return _moveGetDataFromHereSql(file_name, config);
+			if (file_extension == 'gs') return _moveGetDataFromHereGs(file_name);
+			throw new Error(`move(): unsupported source — here file "${file_name}" has extension ".${file_extension}", which is not supported (expected ".sql" with source.config.platform === 'bigquery', or ".gs").`);
+		}
+
+		function _moveGetDataFromSqlPlatform(config) {
+			let query_string = 'select * from ' + config.schema_name + '.' + config.table_name;
+			return _bqRunQuery(query_string, config.credentials.project_id);
+		}
+
+		function _moveGetData(obj) {
+			if (obj.source.where == 'drive') return _moveGetDataFromDrive(obj.source.config);
+			if (obj.source.where == 'here') return _moveGetDataFromHere(obj.source.config);
+			if (obj.source.where == 'sql_platform') return _moveGetDataFromSqlPlatform(obj.source.config);
 			throw new Error(`move(): unsupported source.where "${obj.source.where}" — expected 'drive', 'here', or 'sql_platform'.`);
+		}
+
+		// --- move: destination ---
+
+		function _moveLoadDataToSheetsExisting(config, data, num_rows, num_columns) {
+			let id = config.file_id || DriveApp.getFilesByName(config.file_name).next().getId();
+			let ss = SpreadsheetApp.openById(id);
+			let sheet = config.sheet_name ? ss.getSheetByName(config.sheet_name) : ss.getSheets()[0];
+			if (config.write_disposition == 'append') {
+				sheet.getRange(sheet.getLastRow() + 1, 1, num_rows, num_columns).setValues(data);
+			} else {
+				sheet.getDataRange().clearContent();
+				sheet.getRange(1, 1, num_rows, num_columns).setValues(data);
+			}
+		}
+
+		function _moveLoadDataToSheetsNew(config, data, num_rows, num_columns) {
+			let file = Drive.Files.create({ name: config.file_name, mimeType: MimeType.GOOGLE_SHEETS });
+			let ss = SpreadsheetApp.openById(file.id);
+			let sheet = ss.getSheets()[0];
+			if (config.sheet_name) sheet.setName(config.sheet_name);
+			sheet.getRange(1, 1, num_rows, num_columns).setValues(data);
+			if (config.folder_id) Drive.Files.update({}, file.id, null, { addParents: config.folder_id, removeParents: file.parents });
+		}
+
+		function _moveLoadDataToSheets(config, data, num_rows, num_columns) {
+			if (config.new_file_flag == false) {
+				_moveLoadDataToSheetsExisting(config, data, num_rows, num_columns);
+			} else {
+				_moveLoadDataToSheetsNew(config, data, num_rows, num_columns);
+			}
+			SpreadsheetApp.flush();
+		}
+
+		function _moveLoadDataToCsv(config, data) {
+			let csvContent = _buildCsvContent(data);
+			let fileName = config.file_name.endsWith('.csv') ? config.file_name : config.file_name + '.csv';
+			let folder = DriveApp.getFolderById(config.folder_id || DriveApp.getRootFolder().getId());
+			folder.createFile(fileName, '\ufeff' + csvContent, MimeType.CSV);
+		}
+
+		function _moveLoadDataToDrive(config, data, num_rows, num_columns) {
+			if (config.file_type == 'sheets') return _moveLoadDataToSheets(config, data, num_rows, num_columns);
+			if (config.file_type == 'csv') return _moveLoadDataToCsv(config, data);
+			throw new Error(`move(): unsupported destination — drive file_type "${config.file_type}" is not one of the supported types ('sheets' or 'csv').`);
+		}
+
+		function _moveLoadDataToSqlPlatform(config, data) {
+			let bq_id = config.credentials.project_id;
+			let headers = data[0];
+			let schema = { fields: headers.map(h => {
+				let n = _bqSanitizeColumnName(h);
+				return { name: n, type: (n === config.partition_column ? 'DATE' : 'STRING') };
+			})};
+			let rows = data.slice(1).map(r => {
+				let o = {};
+				headers.forEach((h, i) => o[_bqSanitizeColumnName(h)] = r[i] != null ? String(r[i]) : null);
+				return JSON.stringify(o);
+			}).join('\n');
+			let job = { configuration: { load: {
+				destinationTable: { projectId: bq_id, datasetId: config.schema_name, tableId: config.table_name },
+				schema: schema, sourceFormat: 'NEWLINE_DELIMITED_JSON', writeDisposition: 'WRITE_' + (config.write_disposition || 'append').toUpperCase()
+			}}};
+			if (config.partition_column) job.configuration.load.timePartitioning = { type: 'DAY', field: config.partition_column };
+			let res = BigQuery.Jobs.insert(job, bq_id, Utilities.newBlob(rows, 'application/octet-stream'));
+			let jobStatus = _bqPollLoadJob(bq_id, res.jobReference.jobId);
+			if (jobStatus.errorResult) {
+				throw new Error(`move(): BigQuery load into ${config.schema_name}.${config.table_name} failed: ${jobStatus.errorResult.message}`);
+			}
 		}
 
 		function _moveLoadData(obj, data) {
 			let num_rows = data.length;
 			let num_columns = data[0].length;
 			if (obj.destination.where == 'drive') {
-				if (obj.destination.config.file_type == 'sheets') {
-					let ss, sheet;
-					if (obj.destination.config.new_file_flag == false) {
-						let id = obj.destination.config.file_id || DriveApp.getFilesByName(obj.destination.config.file_name).next().getId();
-						ss = SpreadsheetApp.openById(id);
-						sheet = obj.destination.config.sheet_name ? ss.getSheetByName(obj.destination.config.sheet_name) : ss.getSheets()[0];
-						if (obj.destination.config.write_disposition == 'append') {
-							sheet.getRange(sheet.getLastRow() + 1, 1, num_rows, num_columns).setValues(data);
-						} else {
-							sheet.getDataRange().clearContent();
-							sheet.getRange(1, 1, num_rows, num_columns).setValues(data);
-						}
-					} else {
-						let file = Drive.Files.create({ name: obj.destination.config.file_name, mimeType: MimeType.GOOGLE_SHEETS });
-						ss = SpreadsheetApp.openById(file.id);
-						sheet = ss.getSheets()[0];
-						if (obj.destination.config.sheet_name) sheet.setName(obj.destination.config.sheet_name);
-						sheet.getRange(1, 1, num_rows, num_columns).setValues(data);
-						if (obj.destination.config.folder_id) Drive.Files.update({}, file.id, null, { addParents: obj.destination.config.folder_id, removeParents: file.parents });
-					}
-					SpreadsheetApp.flush();
-				} else if (obj.destination.config.file_type == 'csv') {
-                    let csvContent = data.map(row => row.map(c => {
-                        let s = String(c);
-                        return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s;
-                    }).join(',')).join('\n');
-                    let fileName = obj.destination.config.file_name.endsWith('.csv') ? obj.destination.config.file_name : obj.destination.config.file_name + '.csv';
-                    let folder = DriveApp.getFolderById(obj.destination.config.folder_id || DriveApp.getRootFolder().getId());
-                    folder.createFile(fileName, '\ufeff' + csvContent, MimeType.CSV);
-                } else {
-					throw new Error(`move(): unsupported destination — drive file_type "${obj.destination.config.file_type}" is not one of the supported types ('sheets' or 'csv').`);
-				}
+				_moveLoadDataToDrive(obj.destination.config, data, num_rows, num_columns);
 			} else if (obj.destination.where == 'sql_platform' && obj.destination.config.platform == 'bigquery') {
-				let bq_id = obj.destination.config.credentials.project_id;
-				let headers = data[0];
-				let schema = { fields: headers.map(h => {
-					let n = String(h).replace(/[^a-zA-Z0-9_]/g, '_');
-					return { name: n, type: (n === obj.destination.config.partition_column ? 'DATE' : 'STRING') };
-				})};
-				let rows = data.slice(1).map(r => {
-					let o = {};
-					headers.forEach((h, i) => o[String(h).replace(/[^a-zA-Z0-9_]/g, '_')] = r[i] != null ? String(r[i]) : null);
-					return JSON.stringify(o);
-				}).join('\n');
-				let job = { configuration: { load: {
-					destinationTable: { projectId: bq_id, datasetId: obj.destination.config.schema_name, tableId: obj.destination.config.table_name },
-					schema: schema, sourceFormat: 'NEWLINE_DELIMITED_JSON', writeDisposition: 'WRITE_' + (obj.destination.config.write_disposition || 'append').toUpperCase()
-				}}};
-				if (obj.destination.config.partition_column) job.configuration.load.timePartitioning = { type: 'DAY', field: obj.destination.config.partition_column };
-				let res = BigQuery.Jobs.insert(job, bq_id, Utilities.newBlob(rows, 'application/octet-stream'));
-				let jobStatus;
-				while ((jobStatus = BigQuery.Jobs.get(bq_id, res.jobReference.jobId).status).state !== 'DONE') Utilities.sleep(1000);
-				if (jobStatus.errorResult) {
-					throw new Error(`move(): BigQuery load into ${obj.destination.config.schema_name}.${obj.destination.config.table_name} failed: ${jobStatus.errorResult.message}`);
-				}
+				_moveLoadDataToSqlPlatform(obj.destination.config, data);
 			} else {
 				throw new Error(`move(): unsupported destination.where "${obj.destination.where}"${obj.destination.config && obj.destination.config.platform ? ` (platform "${obj.destination.config.platform}")` : ''} — expected 'drive', or 'sql_platform' with config.platform === 'bigquery'.`);
 			}
