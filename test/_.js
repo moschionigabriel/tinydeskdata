@@ -2,9 +2,17 @@
 // matrix this project implements, and CLAUDE.md's "Making and verifying a
 // change" section for when to run this vs. example/'s teste().
 
+// Memoized per execution: runAll() calls this once per test function (26x),
+// but a single script execution only needs to fetch+eval the library once —
+// GAS resets top-level vars between separate executions, so this never
+// serves stale code across runs.
+var _importedLib_ = null;
+
 function importLib_() {
+  if (_importedLib_) return _importedLib_;
   eval(UrlFetchApp.fetch('https://raw.githubusercontent.com/moschionigabriel/tinydeskdata/master/tinydeskdata.js').getContentText());
-  return tinyDeskData;
+  _importedLib_ = tinyDeskData;
+  return _importedLib_;
 }
 
 // Run everything: provision fixtures, then every Sx/Dx/Ix test function.
