@@ -118,6 +118,26 @@ Script by default, so this stays a plain function that throws (or logs) on
 mismatch — consistent with there being no test runner/CI in this repo
 (see `CLAUDE.md`).
 
+### Running a subset
+
+Each test function (`testS1_sheetDefault`, `testD12_sheetsInvalidMode`,
+`testI3_bigqueryLoadFailureSurfaced`, etc. — see the matrices above for the
+full name list) is independently runnable: select it by name in the Apps
+Script editor's function dropdown and click Run, or `clasp run
+<functionName>` if API-executable access is set up for the `test/`
+project. `runAll()` (`test/_.js`) runs all 26 in sequence and is for
+full-suite regression checks, not day-to-day iteration.
+
+One prerequisite either way: `ensureFixtures()` (Drive fixtures) and
+`ensureBqFixtures()` (BigQuery fixtures) must have been run at least once
+per `tinydeskdata-test` Apps Script project before running any `Sx`/`Dx`/`Ix`
+test — fixture IDs are cached in `PropertiesService`
+(`test/config.js`'s `getFixtureId_`), which throws a descriptive error if a
+fixture isn't set up yet. Both are idempotent (safe to re-run, reuse
+existing resources by name), so this is a one-time-per-project step, not a
+per-test-run one — `runAll()` just happens to call both first as a
+convenience.
+
 ## Edge cases & known limitations
 
 - BigQuery jobs (`bigquery` source/destination, `here`/`.sql` source)

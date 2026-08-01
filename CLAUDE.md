@@ -22,10 +22,9 @@ helper (`_moveGetData`, `_modelCompile`, etc.):
   reads a 2D array from `obj.source`, `_moveLoadData` writes it to
   `obj.destination`. Sources/destinations: `drive` (Sheets/Excel/CSV),
   `here` (local `.sql` run against BigQuery, or `.gs` eval'd as a JS
-  expression), `sql_platform` (a BigQuery table). Fully documented in
+  expression), `bigquery` (a BigQuery table). Fully documented in
   `spec/move.md` — treat that file as the authoritative contract, including
-  its documented edge cases (silent no-ops on unrecognized config, no
-  `errorResult` check on BigQuery loads, etc.).
+  its documented edge cases.
 - **`model(obj)`** — a small dbt-like SQL modeling engine. Compiles
   `.sql.html` files using regex-based templating for `{{ ref('x') }}`,
   `{% set x = [...] %}`, `{% if is_incremental() %}`, and `{% for %}`
