@@ -2,6 +2,11 @@
 **/.clasp.json
 **/.clasprc.json
 
+# Hand-made illustration project + sample run — local reference only,
+# not tracked (see spec/README.md#provenance)
+/example/
+/logs/
+
 # Node
 node_modules/
 

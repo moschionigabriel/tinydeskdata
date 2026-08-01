@@ -27,11 +27,10 @@ helper (`_moveGetData`, `_modelCompile`, etc.):
   its documented edge cases (silent no-ops on unrecognized config, no
   `errorResult` check on BigQuery loads, etc.).
 - **`model(obj)`** — a small dbt-like SQL modeling engine. Compiles
-  `.sql.html` files (see `example/*.sql.html` — a hand-made illustration of
-  the shape, not a fixture exercised by any test) using regex-based templating
-  for `{{ ref('x') }}`, `{% set x = [...] %}`, `{% if is_incremental() %}`,
-  and `{% for %}` (`_modelCompile`); resolves model dependencies from
-  `ref()` calls (`_modelSetDependencies`) and topologically sorts them
+  `.sql.html` files using regex-based templating for `{{ ref('x') }}`,
+  `{% set x = [...] %}`, `{% if is_incremental() %}`, and `{% for %}`
+  (`_modelCompile`); resolves model dependencies from `ref()` calls
+  (`_modelSetDependencies`) and topologically sorts them
   (`_topologicalSort`); executes each model into a `<name>__tmp` table, runs
   column tests (`unique`, `not null`, `accepted_values`, `relationships`)
   before promoting, and materializes as `table` / `view` / `insert` /
@@ -39,8 +38,7 @@ helper (`_moveGetData`, `_modelCompile`, etc.):
 - **`orchestrate(obj)`** — runs named `nodes` (each wrapping a `move` or
   `model` payload) in dependency order via the same topological sort,
   timestamps each node's start/end, and writes the run as a JSON log to a
-  Drive folder — see `logs/*.json` for the shape (one hand-made sample run,
-  kept for shape reference only — not regenerated or checked by anything).
+  Drive folder.
 
 None of these are unit-testable in isolation: they call Apps Script global
 services directly (`SpreadsheetApp`, `DriveApp`, `Drive`, `BigQuery`,
@@ -51,24 +49,14 @@ Apps Script runtime.
 
 The library isn't installed as an npm/clasp package — it's pulled into a
 consumer's Apps Script project at runtime via
-`eval(UrlFetchApp.fetch('https://raw.githubusercontent.com/.../tinydeskdata.js').getContentText())`
-(see `example/_.js`).
-
-`example/` is itself a real, separate Apps Script project (own
-`appsscript.json` + `.clasp.json`, deployed via `clasp`) that exercises all
-three pillars end-to-end against a "jaffle shop" dataset. **It predates
-spec-driven development and is a hand-made illustration, not a test
-suite** — see `spec/README.md`'s Provenance section. It's kept around as a
-worked example of what a consumer project looks like, and `logs/*.json` is
-one hand-made sample run kept only as a shape reference. Neither is
-exercised repeatably or checked by anything — there is no CI/CD in this
-repo.
+`eval(UrlFetchApp.fetch('https://raw.githubusercontent.com/.../tinydeskdata.js').getContentText())`.
 
 `test/` (see `spec/test.md`) is the actual, deliberately-maintained test
 bed: a separate Apps Script project whose only job is to exercise `move()`
 against every documented source/destination combination from `spec/move.md`
-and assert on the result. Unlike `example/`, it's meant to be re-run after
-changes to `_moveGetData`/`_moveLoadData`, not just read as a reference.
+and assert on the result. It's meant to be re-run after changes to
+`_moveGetData`/`_moveLoadData`, not just read as a reference — there is no
+CI/CD in this repo.
 
 ## Making and verifying a change
 
@@ -91,19 +79,10 @@ changes to `_moveGetData`/`_moveLoadData`, not just read as a reference.
      `clasp push` `test/`, run the tests, then revert the URL back to
      `master` before merging — it's a test-harness-only edit and shouldn't
      be committed/shipped.
-4. To sanity-check the full pipeline end-to-end (move + model +
-   orchestrate together): push `example/` with `clasp push`, run `teste()`
-   (in `example/_.js`) from the Apps Script editor or via `clasp run`, then
-   confirm it succeeded by checking BigQuery table/row state and reading
-   the resulting log JSON from the configured Drive
-   `log_destination.folder_id` (compare against `logs/*.json` for the
-   expected shape). This is a manual smoke test against real "jaffle shop"
-   data, not a repeatable regression suite — treat a pass/fail here as
-   informative, not authoritative.
-5. A Claude Code session can do the BigQuery/Drive inspection for either of
-   the above itself — `bq ls` / `bq query` if `gcloud`/`bq` are installed
-   and authenticated (`gcloud auth login`) against the relevant project,
-   and reading log/fixture JSON directly if the Google Drive connector is
+4. A Claude Code session can do the BigQuery/Drive inspection for the
+   above itself — `bq ls` / `bq query` if `gcloud`/`bq` are installed and
+   authenticated (`gcloud auth login`) against the relevant project, and
+   reading fixture state directly if the Google Drive connector is
    connected (`/mcp`) — instead of relying on you to report back what you
    see. This tooling is local, per-session setup, not part of the repo or
    any CI/CD.
